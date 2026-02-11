@@ -1,6 +1,7 @@
 """Async SQLAlchemy session management."""
 
-from typing import AsyncGenerator
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator, AsyncIterator
 
 from loguru import logger
 from sqlalchemy import text
@@ -31,8 +32,11 @@ AsyncSessionLocal = async_sessionmaker(
 )
 
 
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    """Yield an async DB session.
+@asynccontextmanager
+async def get_session() -> AsyncIterator[AsyncSession]:
+    """Provide an async DB session as a context manager.
+
+    This enables usage such as ``async with get_session() as db:``.
 
     Yields:
         AsyncSession: Database session instance.
@@ -46,6 +50,19 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
     except SQLAlchemyError as exc:
         logger.error("Failed to create database session", error=str(exc))
         raise
+
+
+async def get_session_dependency() -> AsyncGenerator[AsyncSession, None]:
+    """Yield an async DB session for FastAPI dependency injection.
+
+    Yields:
+        AsyncSession: Database session instance.
+
+    Raises:
+        SQLAlchemyError: If session setup or teardown fails.
+    """
+    async with get_session() as session:
+        yield session
 
 
 async def database_health_check() -> bool:
