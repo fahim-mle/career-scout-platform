@@ -1,5 +1,6 @@
-"""Application configuration loaded from environment variables."""
+"""Application configuration loaded from environment variables and secrets files."""
 
+from pathlib import Path
 from typing import List, Union
 from urllib.parse import quote_plus
 
@@ -22,6 +23,7 @@ class Settings(BaseSettings):
     DB_NAME: str = "career-scout"
     DB_USER: str = "postgres"
     DB_PASSWORD: str = "postgres"
+    DB_PASSWORD_FILE: str = ""
     DB_DRIVER: str = "asyncpg"
     DB_ECHO: bool = False
     DB_POOL_SIZE: int = 5
@@ -68,6 +70,23 @@ class Settings(BaseSettings):
         raise ValueError("CORS_ORIGINS must be a list or comma-separated string")
 
     @property
+    def resolved_db_password(self) -> str:
+        """Resolve database password from secrets file or environment.
+
+        Returns:
+            str: Password read from ``DB_PASSWORD_FILE`` when available,
+            otherwise the ``DB_PASSWORD`` setting.
+        """
+        if self.DB_PASSWORD_FILE:
+            try:
+                password_file = Path(self.DB_PASSWORD_FILE)
+                if password_file.is_file():
+                    return password_file.read_text(encoding="utf-8").rstrip()
+            except OSError:
+                return self.DB_PASSWORD
+        return self.DB_PASSWORD
+
+    @property
     def DATABASE_URL(self) -> str:
         """Build the async SQLAlchemy database URL from DB_* fields.
 
@@ -75,7 +94,7 @@ class Settings(BaseSettings):
             str: SQLAlchemy async PostgreSQL URL.
         """
         db_user = quote_plus(self.DB_USER)
-        db_password = quote_plus(self.DB_PASSWORD)
+        db_password = quote_plus(self.resolved_db_password)
         return (
             f"postgresql+{self.DB_DRIVER}://{db_user}:{db_password}"
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
