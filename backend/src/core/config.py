@@ -2,7 +2,7 @@
 
 from pathlib import Path
 from typing import List, Union
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit, urlunsplit
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,9 +22,9 @@ class Settings(BaseSettings):
     DB_PORT: int = 5432
     DB_NAME: str = "career-scout"
     DB_USER: str = "postgres"
-    DB_PASSWORD: str = "postgres"
+    DB_PASSWORD: str = ""
     DB_PASSWORD_FILE: str = ""
-    DB_DRIVER: str = "asyncpg"
+    DATABASE_URL_OVERRIDE: str = Field(default="", alias="DATABASE_URL")
     DB_ECHO: bool = False
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 10
@@ -92,12 +92,53 @@ class Settings(BaseSettings):
 
         Returns:
             str: SQLAlchemy async PostgreSQL URL.
+
+        Raises:
+            ValueError: If the configured URL does not use PostgreSQL.
         """
+        if self.DATABASE_URL_OVERRIDE:
+            override = self.DATABASE_URL_OVERRIDE.strip()
+            if override:
+                return self._normalize_async_database_url(override)
+
         db_user = quote_plus(self.DB_USER)
         db_password = quote_plus(self.resolved_db_password)
-        return (
-            f"postgresql+{self.DB_DRIVER}://{db_user}:{db_password}"
+        built_url = (
+            f"postgresql+asyncpg://{db_user}:{db_password}"
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        )
+        return self._normalize_async_database_url(built_url)
+
+    def _normalize_async_database_url(self, database_url: str) -> str:
+        """Normalize PostgreSQL URL to SQLAlchemy asyncpg format.
+
+        Args:
+            database_url: Raw database connection URL.
+
+        Returns:
+            str: URL with ``postgresql+asyncpg`` scheme.
+
+        Raises:
+            ValueError: If the scheme is not PostgreSQL-compatible.
+        """
+        parsed_url = urlsplit(database_url)
+        scheme = parsed_url.scheme.lower()
+
+        if not (
+            scheme in {"postgres", "postgresql"} or scheme.startswith("postgresql+")
+        ):
+            raise ValueError(
+                "DATABASE_URL must use postgres/postgresql scheme for async SQLAlchemy"
+            )
+
+        return urlunsplit(
+            (
+                "postgresql+asyncpg",
+                parsed_url.netloc,
+                parsed_url.path,
+                parsed_url.query,
+                parsed_url.fragment,
+            )
         )
 
 

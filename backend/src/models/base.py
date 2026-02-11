@@ -29,3 +29,6 @@ class BaseModel(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+__all__ = ["Base", "BaseModel"]
