@@ -20,8 +20,10 @@ def _load_api_router() -> APIRouter:
     except ImportError:
         logger.warning("API router not found; using empty router")
         return APIRouter()
-    except Exception as exc:
-        logger.warning(f"Failed to load API router: {exc}")
+    except Exception:
+        logger.exception(
+            "Unexpected error loading API router; falling back to empty router"
+        )
         return APIRouter()
 
 
@@ -39,10 +41,16 @@ def create_app() -> FastAPI:
     )
 
     if settings.CORS_ORIGINS:
+        allow_credentials = "*" not in settings.CORS_ORIGINS
+        if not allow_credentials:
+            logger.warning(
+                "CORS_ORIGINS contains wildcard '*'; disabling credentialed CORS for security"
+            )
+
         app.add_middleware(
             CORSMiddleware,
             allow_origins=settings.CORS_ORIGINS,
-            allow_credentials=True,
+            allow_credentials=allow_credentials,
             allow_methods=["*"],
             allow_headers=["*"],
         )

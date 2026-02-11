@@ -41,7 +41,7 @@ services:
       start_period: 10s
 
   pgadmin:
-    image: dpage/pgadmin4:8.14
+    image: dpage/pgadmin4:9.12
     container_name: career-scout-pgadmin
     restart: unless-stopped
     environment:

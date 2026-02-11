@@ -1,4 +1,4 @@
-# Git Workflow for Job Tracker
+# Git Workflow for Career Scout
 
 **Strategy:** Trunk-based development with `dev` as the primary integration branch
 

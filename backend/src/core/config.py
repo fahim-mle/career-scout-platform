@@ -43,11 +43,13 @@ class Settings(BaseSettings):
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
-    def parse_cors_origins(cls, value: Union[str, List[str]]) -> List[str]:
+    def parse_cors_origins(
+        cls, value: Union[str, List[str], tuple[str, ...], set[str], None]
+    ) -> List[str]:
         """Normalize CORS origins from env variables.
 
         Args:
-            value: Raw env value, list, or comma-separated string.
+            value: Raw env value (None, list/tuple/set, or comma-separated string).
 
         Returns:
             List of CORS origins.
