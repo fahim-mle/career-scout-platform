@@ -18,7 +18,7 @@ from src.core.config import settings
 engine: AsyncEngine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DB_ECHO,
-    pool_size=5,
+    pool_size=settings.DB_POOL_SIZE,
     max_overflow=settings.DB_MAX_OVERFLOW,
     pool_pre_ping=True,
     pool_recycle=settings.DB_POOL_RECYCLE,
@@ -41,15 +41,9 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     Yields:
         AsyncSession: Database session instance.
 
-    Raises:
-        SQLAlchemyError: If session setup or teardown fails.
     """
-    try:
-        async with AsyncSessionLocal() as session:
-            yield session
-    except SQLAlchemyError as exc:
-        logger.error("Failed to create database session", error=str(exc))
-        raise
+    async with AsyncSessionLocal() as session:
+        yield session
 
 
 async def get_session_dependency() -> AsyncGenerator[AsyncSession, None]:
@@ -74,7 +68,8 @@ async def database_health_check() -> bool:
     try:
         async with engine.connect() as connection:
             await connection.execute(text("SELECT 1"))
-        return True
     except SQLAlchemyError as exc:
         logger.error("Database health check failed", error=str(exc))
         return False
+    else:
+        return True

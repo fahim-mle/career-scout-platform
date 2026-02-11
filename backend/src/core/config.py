@@ -24,7 +24,6 @@ class Settings(BaseSettings):
     DB_USER: str = "postgres"
     DB_PASSWORD: str = ""
     DB_PASSWORD_FILE: str = ""
-    DB_DRIVER: str = "asyncpg"
     DATABASE_URL_OVERRIDE: str = Field(default="", alias="DATABASE_URL")
     DB_ECHO: bool = False
     DB_POOL_SIZE: int = 5
@@ -103,7 +102,7 @@ class Settings(BaseSettings):
         db_user = quote_plus(self.DB_USER)
         db_password = quote_plus(self.resolved_db_password)
         built_url = (
-            f"postgresql+{self.DB_DRIVER}://{db_user}:{db_password}"
+            f"postgresql+asyncpg://{db_user}:{db_password}"
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
         )
         return self._normalize_async_database_url(built_url)

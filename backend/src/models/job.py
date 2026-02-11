@@ -22,6 +22,11 @@ from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from src.models.base import BaseModel
 
+ALLOWED_PLATFORMS: tuple[str, ...] = ("linkedin", "seek", "indeed")
+PLATFORM_CHECK_CONDITION = (
+    f"platform IN ({', '.join(repr(platform) for platform in ALLOWED_PLATFORMS)})"
+)
+
 
 class Job(BaseModel):
     """Represents a scraped job listing."""
@@ -32,7 +37,7 @@ class Job(BaseModel):
             "external_id", "platform", name="uq_jobs_external_id_platform"
         ),
         CheckConstraint(
-            "platform IN ('linkedin', 'seek', 'indeed')",
+            PLATFORM_CHECK_CONDITION,
             name="ck_jobs_platform_valid",
         ),
         Index("ix_jobs_platform", "platform"),
@@ -67,9 +72,8 @@ class Job(BaseModel):
     @validates("platform")
     def validate_platform(self, key: str, value: str) -> str:
         """Validate supported platform values."""
-        allowed_platforms: set[str] = {"linkedin", "seek", "indeed"}
-        if value not in allowed_platforms:
-            allowed_values = ", ".join(sorted(allowed_platforms))
+        if value not in ALLOWED_PLATFORMS:
+            allowed_values = ", ".join(ALLOWED_PLATFORMS)
             raise ValueError(
                 f"Invalid platform '{value}'. Allowed values: {allowed_values}."
             )
@@ -84,10 +88,7 @@ class Job(BaseModel):
         if not isinstance(value, list):
             raise ValueError("Invalid skills payload: expected a list of strings.")
 
-        invalid_items = [
-            item for item in value if not isinstance(item, str) or not item.strip()
-        ]
-        if invalid_items:
+        if any(not isinstance(item, str) or not item.strip() for item in value):
             raise ValueError(
                 "Invalid skills payload: each skill must be a non-empty string."
             )
@@ -119,9 +120,9 @@ class Job(BaseModel):
         max_salary = value.get("max")
         currency = value.get("currency")
 
-        if not isinstance(min_salary, (int, float)):
+        if isinstance(min_salary, bool) or not isinstance(min_salary, (int, float)):
             raise ValueError("Invalid salary_range payload: 'min' must be numeric.")
-        if not isinstance(max_salary, (int, float)):
+        if isinstance(max_salary, bool) or not isinstance(max_salary, (int, float)):
             raise ValueError("Invalid salary_range payload: 'max' must be numeric.")
         if min_salary > max_salary:
             raise ValueError("Invalid salary_range payload: 'min' cannot exceed 'max'.")
