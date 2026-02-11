@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+pydantic-settings
+sqlalchemy[asyncio]
+asyncpg
+loguru
+python-multipart
+httpx
+redis
+celery
