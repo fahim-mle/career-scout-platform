@@ -1,10 +1,7 @@
 """Async SQLAlchemy session management."""
 
-import asyncio
 from typing import AsyncGenerator
 
-from loguru import logger
-from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -32,33 +29,10 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    """Yield an async DB session with connection retries.
+    """Yield an async DB session.
 
     Yields:
         AsyncSession: Database session instance.
-
-    Raises:
-        OperationalError: If the database connection fails after retries.
     """
-    max_retries = settings.DB_CONNECT_RETRIES
-    delay_seconds = settings.DB_CONNECT_RETRY_DELAY
-
-    for attempt in range(1, max_retries + 1):
-        try:
-            async with AsyncSessionLocal() as session:
-                yield session
-                return
-        except OperationalError as exc:
-            if attempt < max_retries:
-                logger.warning(
-                    f"Database connection failed; retrying ({attempt}/{max_retries})",
-                    error=str(exc),
-                )
-                await asyncio.sleep(delay_seconds)
-                continue
-
-            logger.error(
-                f"Database connection failed after {max_retries} retries",
-                error=str(exc),
-            )
-            raise
+    async with AsyncSessionLocal() as session:
+        yield session

@@ -1,6 +1,7 @@
 """Application configuration loaded from environment variables."""
 
 from typing import List, Union
+from urllib.parse import quote_plus
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -16,9 +17,12 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
 
     # Database
-    DATABASE_URL: str = (
-        "postgresql+asyncpg://postgres:postgres@localhost:5432/career_scout"
-    )
+    DB_HOST: str = "localhost"
+    DB_PORT: int = 5432
+    DB_NAME: str = "career-scout"
+    DB_USER: str = "postgres"
+    DB_PASSWORD: str = "postgres"
+    DB_DRIVER: str = "asyncpg"
     DB_ECHO: bool = False
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 10
@@ -60,6 +64,20 @@ class Settings(BaseSettings):
         if isinstance(value, (list, tuple, set)):
             return [str(origin).strip() for origin in value if str(origin).strip()]
         raise ValueError("CORS_ORIGINS must be a list or comma-separated string")
+
+    @property
+    def DATABASE_URL(self) -> str:
+        """Build the async SQLAlchemy database URL from DB_* fields.
+
+        Returns:
+            str: SQLAlchemy async PostgreSQL URL.
+        """
+        db_user = quote_plus(self.DB_USER)
+        db_password = quote_plus(self.DB_PASSWORD)
+        return (
+            f"postgresql+{self.DB_DRIVER}://{db_user}:{db_password}"
+            f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
+        )
 
 
 settings = Settings()

@@ -5,10 +5,10 @@ set -euo pipefail
 mkdir -p secrets
 
 # Database password
-openssl rand -base64 32 > secrets/db_password.txt
+openssl rand -base64 32 | tr -d '\n' > secrets/db_password.txt
 
 # Grafana password
-openssl rand -base64 32 > secrets/grafana_password.txt
+openssl rand -base64 32 | tr -d '\n' > secrets/grafana_password.txt
 
 chmod 600 secrets/*.txt
 

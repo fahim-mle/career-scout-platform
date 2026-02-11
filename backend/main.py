@@ -14,8 +14,6 @@ def _load_api_router() -> APIRouter:
         APIRouter: Router instance for versioned API.
     """
     try:
-        # This import will fail until we actually define api_router in src/api/__init__.py
-        # For now, we return an empty router to allow the app to start
         from src.api import api_router
 
         return api_router

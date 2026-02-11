@@ -6,7 +6,7 @@ RUN pip install --no-cache-dir uv
 
 COPY requirements.txt ./
 
-RUN uv pip install --system --no-cache -r requirements.txt
+RUN uv pip install --system --no-cache --require-hashes -r requirements.txt
 
 
 FROM python:3.12-slim AS runtime
@@ -14,7 +14,7 @@ FROM python:3.12-slim AS runtime
 WORKDIR /app
 
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --from=builder /usr/local/bin/uvicorn /usr/local/bin/uvicorn
 
 COPY main.py ./
 COPY src/ ./src/

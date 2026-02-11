@@ -259,9 +259,9 @@ git push origin dev
 
 ### Direct push policy for agents
 
-- Agents must not push directly to `main`.
-- Agents must not open PRs that bypass `dev`.
-- Agents must treat `dev` as the default destination branch for all tasks.
+- Do not push directly to `main`.
+- Avoid opening PRs that bypass `dev`.
+- Treat `dev` as the default destination branch for all tasks.
 
 ---
 
