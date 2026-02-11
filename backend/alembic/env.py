@@ -14,7 +14,7 @@ from src.core.config import settings
 from src.db.base import Base
 
 # Importing models ensures Alembic autogenerate can discover tables.
-from src.models import job  # noqa: F401
+from src.models import job
 
 config = context.config
 
@@ -88,17 +88,19 @@ async def run_migrations_online() -> None:
     Raises:
         RuntimeError: If engine initialization or migration execution fails.
     """
+    connectable: AsyncEngine | None = None
     try:
-        connectable: AsyncEngine = async_engine_from_config(
+        connectable = async_engine_from_config(
             config.get_section(config.config_ini_section, {}),
             prefix="sqlalchemy.",
             poolclass=pool.NullPool,
         )
+        if connectable is None:
+            raise RuntimeError("Failed to initialize Alembic async engine")
 
         async with connectable.connect() as connection:
             await connection.run_sync(do_run_migrations)
 
-        await connectable.dispose()
         logger.info("Alembic online migrations completed")
     except Exception as exc:
         logger.error(
@@ -107,6 +109,9 @@ async def run_migrations_online() -> None:
             exc_info=True,
         )
         raise RuntimeError("Failed to run online migrations") from exc
+    finally:
+        if connectable is not None:
+            await connectable.dispose()
 
 
 if context.is_offline_mode():

@@ -52,8 +52,8 @@ class BaseRepository(Generic[ModelT]):
                 error=str(exc),
             ).error("Rollback failed")
 
-    def _list_with_pagination(self, items: Sequence[ModelT]) -> list[ModelT]:
-        """Normalize sequence results to list type.
+    def _to_list(self, items: Sequence[ModelT]) -> list[ModelT]:
+        """Materialize a sequence of model instances to a list.
 
         Args:
             items: Sequence returned by SQLAlchemy scalars collection.

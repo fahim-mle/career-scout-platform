@@ -13,6 +13,8 @@ from src.core.exceptions import DuplicateJobError, RepositoryError
 from src.models.job import Job
 from src.repositories.base import BaseRepository
 
+PROTECTED_UPDATE_FIELDS = frozenset({"id", "created_at", "updated_at"})
+
 
 class JobRepository(BaseRepository[Job]):
     """Repository responsible for job table persistence operations."""
@@ -38,12 +40,12 @@ class JobRepository(BaseRepository[Job]):
             RepositoryError: If database query fails.
         """
         log = logger.bind(repository=self.__class__.__name__, job_id=job_id)
-        log.info("Fetching job by id")
+        log.debug("Fetching job by id")
 
         try:
             result = await self.db.execute(select(Job).where(Job.id == job_id))
             job = result.scalar_one_or_none()
-            log.bind(found=job is not None).info("Fetched job by id")
+            log.bind(found=job is not None).debug("Fetched job by id")
             return job
         except SQLAlchemyError as exc:
             log.bind(error=str(exc)).error("Failed to fetch job by id")
@@ -85,7 +87,7 @@ class JobRepository(BaseRepository[Job]):
             platform=platform,
             is_active=is_active,
         )
-        log.info("Fetching jobs with pagination")
+        log.debug("Fetching jobs with pagination")
 
         try:
             query = select(Job).where(Job.is_active == is_active)
@@ -95,8 +97,8 @@ class JobRepository(BaseRepository[Job]):
             result = await self.db.execute(
                 query.order_by(Job.id.desc()).offset(skip).limit(limit)
             )
-            jobs = self._list_with_pagination(result.scalars().all())
-            log.bind(count=len(jobs)).info("Fetched paginated jobs")
+            jobs = self._to_list(result.scalars().all())
+            log.bind(count=len(jobs)).debug("Fetched paginated jobs")
             return jobs
         except SQLAlchemyError as exc:
             log.bind(error=str(exc)).error("Failed to fetch paginated jobs")
@@ -173,6 +175,10 @@ class JobRepository(BaseRepository[Job]):
             return None
 
         for field, value in job_data.items():
+            if field in PROTECTED_UPDATE_FIELDS:
+                raise ValueError(f"Cannot update protected field: {field}")
+            if field.startswith("_") or not hasattr(Job, field):
+                raise ValueError(f"Unknown or unsafe update field: {field}")
             setattr(job, field, value)
 
         try:
@@ -253,7 +259,7 @@ class JobRepository(BaseRepository[Job]):
             external_id=external_id,
             platform=platform,
         )
-        log.info("Fetching job by external identifier")
+        log.debug("Fetching job by external identifier")
 
         try:
             result = await self.db.execute(
@@ -263,7 +269,7 @@ class JobRepository(BaseRepository[Job]):
                 )
             )
             job = result.scalar_one_or_none()
-            log.bind(found=job is not None).info("Fetched job by external identifier")
+            log.bind(found=job is not None).debug("Fetched job by external identifier")
             return job
         except SQLAlchemyError as exc:
             log.bind(error=str(exc)).error("Failed to fetch job by external identifier")
@@ -280,6 +286,9 @@ class JobRepository(BaseRepository[Job]):
 
         Returns:
             ``True`` when error indicates duplicate external_id + platform.
+
+        Note:
+            Detection relies on PostgreSQL error message text and constraint naming.
         """
         error_text = (
             str(error.orig).lower() if error.orig is not None else str(error).lower()

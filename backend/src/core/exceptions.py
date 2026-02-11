@@ -26,10 +26,10 @@ class BusinessLogicError(CareerScoutError):
 
 
 __all__ = [
+    "BusinessLogicError",
     "CareerScoutError",
-    "RepositoryError",
     "DuplicateError",
     "DuplicateJobError",
     "NotFoundError",
-    "BusinessLogicError",
+    "RepositoryError",
 ]
