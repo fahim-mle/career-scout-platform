@@ -16,7 +16,15 @@ Run:
 bash scripts/generate-secrets.sh
 ```
 
-The script creates secure random passwords and applies restricted file permissions.
+The script creates secure random values for all documented secret files and applies restricted file permissions.
+
+By default, it will not overwrite existing secret files. If any target file already exists, the script exits with a helpful message.
+
+To overwrite all target secret files:
+
+```bash
+bash scripts/generate-secrets.sh --force
+```
 
 ## Security Notes
 

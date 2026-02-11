@@ -47,12 +47,19 @@ def create_app() -> FastAPI:
                 "CORS_ORIGINS contains wildcard '*'; disabling credentialed CORS for security"
             )
 
+        allow_methods = ["*"]
+        allow_headers = ["*"]
+        if settings.ENVIRONMENT != "local":
+            allow_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+            allow_headers = ["Authorization", "Content-Type", "Accept", "Origin"]
+            logger.info("Applying explicit CORS policy for non-local environment")
+
         app.add_middleware(
             CORSMiddleware,
             allow_origins=settings.CORS_ORIGINS,
             allow_credentials=allow_credentials,
-            allow_methods=["*"],
-            allow_headers=["*"],
+            allow_methods=allow_methods,
+            allow_headers=allow_headers,
         )
 
     api_router = _load_api_router()
