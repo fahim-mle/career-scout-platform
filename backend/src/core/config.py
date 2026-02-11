@@ -97,7 +97,9 @@ class Settings(BaseSettings):
             ValueError: If the configured URL does not use PostgreSQL.
         """
         if self.DATABASE_URL_OVERRIDE:
-            return self._normalize_async_database_url(self.DATABASE_URL_OVERRIDE)
+            override = self.DATABASE_URL_OVERRIDE.strip()
+            if override:
+                return self._normalize_async_database_url(override)
 
         db_user = quote_plus(self.DB_USER)
         db_password = quote_plus(self.resolved_db_password)
