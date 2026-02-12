@@ -21,7 +21,16 @@ def build_job_data(
     company: str = "Career Scout",
     location: str = "Brisbane",
 ) -> dict[str, object]:
-    """Build valid job payload for repository create calls."""
+    """
+    Create a valid job payload dictionary for repository create calls.
+    
+    Parameters:
+        external_id (str): Identifier of the job in the external platform.
+        platform (str): Source platform name (used to form the job URL); defaults to "linkedin".
+    
+    Returns:
+        dict: A job payload dictionary with keys `external_id`, `platform`, `url`, `title`, `company`, and `location`.
+    """
     return {
         "external_id": external_id,
         "platform": platform,
@@ -123,6 +132,9 @@ async def test_create_raises_duplicate_error(
 async def test_create_raises_repository_error_for_other_integrity_failures(
     db_session: AsyncSession,
 ) -> None:
+    """
+    Verifies that attempting to create a job with a payload that violates a database integrity constraint (for example, a missing required `title`) raises a RepositoryError with a message containing "integrity error".
+    """
     repo = JobRepository(db_session)
     invalid_payload: dict[str, object] = build_job_data(external_id="missing-title")
     invalid_payload["title"] = None
@@ -277,6 +289,12 @@ async def test_get_by_id_wraps_sqlalchemy_error(
     repo = JobRepository(db_session)
 
     async def failing_execute(*_args: object, **_kwargs: object) -> object:
+        """
+        Force a SQLAlchemyError with message "boom".
+        
+        Raises:
+            SQLAlchemyError: Always raised with message "boom".
+        """
         raise SQLAlchemyError("boom")
 
     monkeypatch.setattr(repo.db, "execute", failing_execute)
@@ -293,6 +311,12 @@ async def test_get_all_wraps_sqlalchemy_error(
     repo = JobRepository(db_session)
 
     async def failing_execute(*_args: object, **_kwargs: object) -> object:
+        """
+        Force a SQLAlchemyError with message "boom".
+        
+        Raises:
+            SQLAlchemyError: Always raised with message "boom".
+        """
         raise SQLAlchemyError("boom")
 
     monkeypatch.setattr(repo.db, "execute", failing_execute)

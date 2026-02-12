@@ -22,7 +22,24 @@ from tests.factories import job_factory
 
 
 def _default_test_database_url() -> str:
-    """Build a default test DB URL using env vars and local secrets fallback."""
+    """
+    Constructs a default PostgreSQL asyncpg connection URL for tests using environment variables with a secrets-file fallback.
+    
+    Reads configuration from environment variables with these defaults:
+    - host: TEST_DB_HOST or "localhost"
+    - port: TEST_DB_PORT or "5432"
+    - user: TEST_DB_USER, then DB_USER, or "postgres"
+    - database name: TEST_DB_NAME or "career_scout_test"
+    Password resolution order:
+    1. TEST_DB_PASSWORD
+    2. DB_PASSWORD
+    3. secrets/db_password.txt located two levels above this file (if present)
+    
+    The returned URL includes URL-encoded credentials.
+    
+    Returns:
+        str: A connection URL in the form "postgresql+asyncpg://<user>:<password>@<host>:<port>/<name>".
+    """
     host = os.getenv("TEST_DB_HOST", "localhost")
     port = os.getenv("TEST_DB_PORT", "5432")
     user = os.getenv("TEST_DB_USER", os.getenv("DB_USER", "postgres"))
@@ -47,7 +64,12 @@ TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", _default_test_database_url())
 
 @pytest_asyncio.fixture(scope="session")
 async def test_engine() -> AsyncGenerator[AsyncEngine, None]:
-    """Create an isolated engine and ensure schema lifecycle for tests."""
+    """
+    Provide an AsyncEngine connected to the test database with the schema created before tests and dropped after tests.
+    
+    Yields:
+        AsyncEngine: Engine instance bound to the test database with Base.metadata created for the test session.
+    """
     engine = create_async_engine(
         TEST_DATABASE_URL,
         echo=False,
@@ -67,7 +89,14 @@ async def test_engine() -> AsyncGenerator[AsyncEngine, None]:
 
 @pytest_asyncio.fixture
 async def db_session(test_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
-    """Provide a per-test async session and cleanup DB state."""
+    """
+    Provide a per-test database session and ensure test-specific cleanup.
+    
+    Yields an AsyncSession for use in a test. After the test completes, any pending transactions are rolled back, the `jobs` table is truncated with identity restart and cascade, and the changes are committed.
+    
+    Returns:
+        session (AsyncSession): Database session scoped to the current test.
+    """
     session_maker = async_sessionmaker(
         bind=test_engine,
         class_=AsyncSession,
