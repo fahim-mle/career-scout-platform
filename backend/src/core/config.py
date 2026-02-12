@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     DB_POOL_TIMEOUT: int = 30
     DB_CONNECT_RETRIES: int = 3
     DB_CONNECT_RETRY_DELAY: float = 1.0
+    REDIS_URL: str = "redis://localhost:6379/0"
 
     # CORS
     CORS_ORIGINS: List[str] = Field(default_factory=list)
