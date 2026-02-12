@@ -5,6 +5,7 @@ from typing import Annotated, AsyncGenerator
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.health import HealthService
 from src.db.session import get_session_dependency
 
 
@@ -33,6 +34,15 @@ def get_request_id(request: Request) -> str:
     return "unknown"
 
 
+def get_health_service() -> HealthService:
+    """Provide a health service dependency.
+
+    Returns:
+        HealthService configured for dependency checks.
+    """
+    return HealthService()
+
+
 DBSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
-__all__ = ["DBSessionDep", "get_db_session", "get_request_id"]
+__all__ = ["DBSessionDep", "get_db_session", "get_health_service", "get_request_id"]
