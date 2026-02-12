@@ -6,6 +6,7 @@ from urllib.parse import quote_plus, urlsplit, urlunsplit
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from loguru import logger
 
 
 class Settings(BaseSettings):
@@ -78,6 +79,15 @@ class Settings(BaseSettings):
 
         if environment in {"local", "development", "dev"} and not self.CORS_ORIGINS:
             self.CORS_ORIGINS = ["http://localhost:3000", "http://localhost:5173"]
+
+        if (
+            environment not in {"local", "development", "dev", "production"}
+            and not self.CORS_ORIGINS
+        ):
+            logger.warning(
+                "CORS_ORIGINS is empty for ENV={env}; cross-origin requests will be blocked by default.",
+                env=self.ENVIRONMENT,
+            )
 
         return self
 
