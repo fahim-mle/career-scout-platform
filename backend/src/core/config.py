@@ -4,8 +4,9 @@ from pathlib import Path
 from typing import List, Union
 from urllib.parse import quote_plus, urlsplit, urlunsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from loguru import logger
 
 
 class Settings(BaseSettings):
@@ -68,6 +69,27 @@ class Settings(BaseSettings):
         if isinstance(value, (list, tuple, set)):
             return [str(origin).strip() for origin in value if str(origin).strip()]
         raise ValueError("CORS_ORIGINS must be a list or comma-separated string")
+
+    @model_validator(mode="after")
+    def validate_production_cors_origins(self) -> "Settings":
+        """Require explicit production CORS and apply local dev defaults."""
+        environment = self.ENVIRONMENT.lower()
+        if environment == "production" and not self.CORS_ORIGINS:
+            raise ValueError("CORS_ORIGINS must be explicitly set when ENV=production")
+
+        if environment in {"local", "development", "dev"} and not self.CORS_ORIGINS:
+            self.CORS_ORIGINS = ["http://localhost:3000", "http://localhost:5173"]
+
+        if (
+            environment not in {"local", "development", "dev", "production"}
+            and not self.CORS_ORIGINS
+        ):
+            logger.warning(
+                "CORS_ORIGINS is empty for ENV={env}; cross-origin requests will be blocked by default.",
+                env=self.ENVIRONMENT,
+            )
+
+        return self
 
     @property
     def resolved_db_password(self) -> str:
