@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from copy import deepcopy
 from typing import Any
 from uuid import uuid4
 
@@ -14,22 +15,8 @@ from loguru import logger
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.api import api_router
+from src.api.deps import get_request_id as _get_request_id
 from src.core.config import settings
-
-
-def _get_request_id(request: Request) -> str:
-    """Read request id from request state.
-
-    Args:
-        request: Active incoming request.
-
-    Returns:
-        Request id string when available, otherwise ``"unknown"``.
-    """
-    request_id = getattr(request.state, "request_id", None)
-    if isinstance(request_id, str) and request_id:
-        return request_id
-    return "unknown"
 
 
 async def request_logging_middleware(request: Request, call_next: Any) -> Response:
@@ -97,7 +84,9 @@ async def handle_http_exception(
         JSONResponse payload with error detail and request id.
     """
     request_id = _get_request_id(request)
-    detail = exc.detail if isinstance(exc.detail, str) else "Request failed"
+    detail = (
+        exc.detail if isinstance(exc.detail, (str, list, dict)) else "Request failed"
+    )
     logger.warning(
         "HTTP exception raised",
         request_id=request_id,
@@ -126,17 +115,23 @@ async def handle_validation_exception(
         JSONResponse payload with validation details and request id.
     """
     request_id = _get_request_id(request)
+    sanitized_errors: list[dict[str, Any]] = []
+    for error in exc.errors():
+        copied_error = deepcopy(error)
+        copied_error.pop("input", None)
+        sanitized_errors.append(copied_error)
+
     logger.warning(
         "Validation exception raised",
         request_id=request_id,
         path=request.url.path,
-        errors=exc.errors(),
+        errors=sanitized_errors,
     )
     return JSONResponse(
         status_code=422,
         content={
             "detail": "Validation failed",
-            "errors": exc.errors(),
+            "errors": sanitized_errors,
             "request_id": request_id,
         },
     )
