@@ -29,7 +29,17 @@ class JobFactory:
         is_active: bool = True,
         posted_date: date | None = None,
     ) -> Job:
-        """Create and persist a Job model with sensible defaults."""
+        """
+        Create and persist a Job model using sensible defaults.
+        
+        Parameters:
+            external_id (str | None): External identifier to use for the job. If None, a unique value of the form
+                "test-job-{n}" is generated where `n` is an internal counter.
+            posted_date (date | None): Date the job was posted; pass `None` to leave the field unset.
+        
+        Returns:
+            job (Job): The persisted Job instance with its database state refreshed.
+        """
         self._counter += 1
         job_external_id = external_id or f"test-job-{self._counter}"
 
@@ -51,5 +61,10 @@ class JobFactory:
 
 @pytest_asyncio.fixture
 async def job_factory(db_session: AsyncSession) -> JobFactory:
-    """Provide a JobFactory bound to the current DB session."""
+    """
+    Provide a JobFactory bound to the current database session.
+    
+    Returns:
+        JobFactory: A JobFactory instance bound to the provided AsyncSession.
+    """
     return JobFactory(db=db_session)
