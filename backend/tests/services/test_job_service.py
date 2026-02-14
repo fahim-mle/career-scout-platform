@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -15,6 +15,7 @@ from src.core.exceptions import (
     NotFoundError,
     RepositoryError,
 )
+from src.repositories.job import JobRepository
 from src.schemas.job import JobCreate, JobUpdate
 from src.services.job_service import JobService
 
@@ -108,10 +109,15 @@ class FakeJobRepository:
         return updated
 
 
+def make_service(repo: FakeJobRepository) -> JobService:
+    """Create JobService with a casted repository test double."""
+    return JobService(cast(JobRepository, repo))
+
+
 @pytest.mark.asyncio
 async def test_get_job_returns_response_when_found() -> None:
     repo = FakeJobRepository(jobs={1: make_job(id=1)})
-    service = JobService(repo)
+    service = make_service(repo)
 
     result = await service.get_job(1)
 
@@ -121,7 +127,7 @@ async def test_get_job_returns_response_when_found() -> None:
 
 @pytest.mark.asyncio
 async def test_get_job_raises_not_found_when_missing() -> None:
-    service = JobService(FakeJobRepository())
+    service = make_service(FakeJobRepository())
 
     with pytest.raises(NotFoundError, match="not found"):
         await service.get_job(999)
@@ -129,7 +135,7 @@ async def test_get_job_raises_not_found_when_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_create_job_rejects_future_date() -> None:
-    service = JobService(FakeJobRepository())
+    service = make_service(FakeJobRepository())
     payload = JobCreate(
         external_id="future-1",
         platform="linkedin",
@@ -145,8 +151,27 @@ async def test_create_job_rejects_future_date() -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_job_success_returns_response() -> None:
+    service = make_service(FakeJobRepository())
+    payload = JobCreate(
+        external_id="new-1",
+        platform="linkedin",
+        url="https://linkedin.com/jobs/new-1",
+        title="Backend Engineer",
+        company="Acme",
+        location="Brisbane",
+    )
+
+    result = await service.create_job(payload)
+
+    assert result.id == 1
+    assert result.external_id == "new-1"
+    assert result.platform == "linkedin"
+
+
+@pytest.mark.asyncio
 async def test_create_job_rejects_url_domain_mismatch() -> None:
-    service = JobService(FakeJobRepository())
+    service = make_service(FakeJobRepository())
     payload = JobCreate(
         external_id="bad-url-1",
         platform="linkedin",
@@ -163,7 +188,7 @@ async def test_create_job_rejects_url_domain_mismatch() -> None:
 @pytest.mark.asyncio
 async def test_create_job_converts_duplicate_error() -> None:
     repo = FakeJobRepository(duplicate_on_create=True)
-    service = JobService(repo)
+    service = make_service(repo)
     payload = JobCreate(
         external_id="dup-1",
         platform="linkedin",
@@ -182,7 +207,7 @@ async def test_update_job_rejects_immutable_fields() -> None:
     repo = FakeJobRepository(
         jobs={1: make_job(id=1, external_id="fixed-1", platform="linkedin")}
     )
-    service = JobService(repo)
+    service = make_service(repo)
 
     with pytest.raises(BusinessLogicError, match="external_id cannot be changed"):
         await service.update_job(1, JobUpdate(external_id="other-id"))
@@ -193,7 +218,7 @@ async def test_update_job_rejects_non_growing_description() -> None:
     repo = FakeJobRepository(
         jobs={1: make_job(id=1, description_full="This is a very long description")}
     )
-    service = JobService(repo)
+    service = make_service(repo)
 
     with pytest.raises(BusinessLogicError, match="must be longer"):
         await service.update_job(1, JobUpdate(description_full="short"))
@@ -202,20 +227,33 @@ async def test_update_job_rejects_non_growing_description() -> None:
 @pytest.mark.asyncio
 async def test_update_job_allows_longer_description() -> None:
     repo = FakeJobRepository(jobs={1: make_job(id=1, description_full="short")})
-    service = JobService(repo)
+    service = make_service(repo)
 
     result = await service.update_job(
         1,
         JobUpdate(description_full="this is now a much longer and richer description"),
     )
 
+    assert result.description_full is not None
     assert result.description_full.startswith("this is now")
+
+
+@pytest.mark.asyncio
+async def test_update_job_allows_clearing_description_with_none() -> None:
+    repo = FakeJobRepository(
+        jobs={1: make_job(id=1, description_full="This can be cleared")}
+    )
+    service = make_service(repo)
+
+    result = await service.update_job(1, JobUpdate(description_full=None))
+
+    assert result.description_full is None
 
 
 @pytest.mark.asyncio
 async def test_delete_job_soft_deletes_and_is_idempotent() -> None:
     repo = FakeJobRepository(jobs={1: make_job(id=1, is_active=True)})
-    service = JobService(repo)
+    service = make_service(repo)
 
     first = await service.delete_job(1)
     second = await service.delete_job(1)
@@ -227,7 +265,7 @@ async def test_delete_job_soft_deletes_and_is_idempotent() -> None:
 
 @pytest.mark.asyncio
 async def test_list_jobs_rejects_invalid_platform_filter() -> None:
-    service = JobService(FakeJobRepository())
+    service = make_service(FakeJobRepository())
 
     with pytest.raises(BusinessLogicError, match="Invalid platform"):
         await service.list_jobs(platform="monster")
@@ -236,7 +274,7 @@ async def test_list_jobs_rejects_invalid_platform_filter() -> None:
 @pytest.mark.asyncio
 async def test_repository_error_translates_to_business_logic_error() -> None:
     repo = FakeJobRepository(jobs={1: make_job(id=1)}, fail_update=True)
-    service = JobService(repo)
+    service = make_service(repo)
 
     with pytest.raises(BusinessLogicError, match="Failed to update job"):
         await service.update_job(1, JobUpdate(title="New title"))

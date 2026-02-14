@@ -23,6 +23,9 @@ PLATFORM_DOMAINS: dict[str, str] = {
     "indeed": "indeed.com",
 }
 
+if set(PLATFORM_DOMAINS) != set(ALLOWED_PLATFORMS):
+    raise RuntimeError("PLATFORM_DOMAINS keys must match ALLOWED_PLATFORMS.")
+
 
 class JobService:
     """Service layer for job business rules and repository orchestration."""
@@ -138,9 +141,10 @@ class JobService:
         )
         log.info("Creating job")
 
+        self._validate_posted_date(payload.posted_date)
+        self._validate_url_for_platform(str(payload.url), payload.platform)
+
         try:
-            self._validate_posted_date(payload.posted_date)
-            self._validate_url_for_platform(str(payload.url), payload.platform)
             job_data = payload.model_dump(mode="python")
             job_data["url"] = str(payload.url)
             job = await self.repo.create(job_data)
@@ -186,7 +190,13 @@ class JobService:
             raise NotFoundError(f"Job {job_id} not found.")
 
         update_data = payload.model_dump(exclude_unset=True, mode="python")
-        self._validate_immutable_fields(existing=existing, updates=update_data)
+        self._validate_and_strip_immutable_fields(
+            existing=existing, updates=update_data
+        )
+
+        if not update_data:
+            log.info("No mutable fields provided; returning existing job")
+            return JobResponse.model_validate(existing)
 
         if "posted_date" in update_data:
             self._validate_posted_date(update_data.get("posted_date"))
@@ -196,10 +206,6 @@ class JobService:
             self._validate_url_for_platform(str(update_data["url"]), existing.platform)
 
         self._validate_description_growth(existing=existing, updates=update_data)
-
-        if not update_data:
-            log.info("No mutable fields provided; returning existing job")
-            return JobResponse.model_validate(existing)
 
         try:
             updated = await self.repo.update(job_id, update_data)
@@ -302,16 +308,16 @@ class JobService:
                 f"URL domain '{hostname}' does not match platform '{platform}'."
             )
 
-    def _validate_immutable_fields(
+    def _validate_and_strip_immutable_fields(
         self,
         existing: Job,
         updates: dict[str, object],
     ) -> None:
-        """Enforce immutable job fields after creation.
+        """Enforce immutable job fields and remove them from updates.
 
         Args:
             existing: Current persisted job entity.
-            updates: Partial update payload map.
+            updates: Partial update payload map that may be mutated in-place.
 
         Raises:
             BusinessLogicError: If immutable fields are changed.
@@ -342,6 +348,9 @@ class JobService:
                 continue
 
             next_value = updates[field_name]
+            if next_value is None:
+                continue
+
             current_value = getattr(existing, field_name)
             current_length = len(current_value or "")
             next_length = len(next_value) if isinstance(next_value, str) else 0
