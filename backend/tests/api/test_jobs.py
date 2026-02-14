@@ -7,9 +7,10 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 
-from src.api.deps import get_db_session
+from src.api.deps import get_db_session, get_job_service
+from src.core.exceptions import BusinessLogicError
 from src.main import app
 
 
@@ -46,7 +47,8 @@ async def client(db_session: Any) -> AsyncClient:
 
     app.dependency_overrides[get_db_session] = override_get_db
 
-    async with AsyncClient(app=app, base_url="http://test") as api_client:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as api_client:
         yield api_client
 
     app.dependency_overrides.clear()
@@ -134,6 +136,15 @@ class TestJobsAPI:
         assert body[0]["external_id"] == "api-inactive-1"
 
     @pytest.mark.asyncio
+    async def test_list_jobs_invalid_platform_returns_400(
+        self, client: AsyncClient
+    ) -> None:
+        response = await client.get("/api/v1/jobs?platform=monster")
+
+        assert response.status_code == 400
+        assert "invalid platform" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
     async def test_get_job_by_id_success(self, client: AsyncClient) -> None:
         create_response = await client.post(
             "/api/v1/jobs", json=build_job_payload("api-get-1")
@@ -151,6 +162,21 @@ class TestJobsAPI:
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_get_job_business_error_returns_400(
+        self, client: AsyncClient
+    ) -> None:
+        class BrokenGetService:
+            async def get_job(self, job_id: int) -> dict[str, Any]:
+                raise BusinessLogicError("service failure")
+
+        app.dependency_overrides[get_job_service] = lambda: BrokenGetService()
+        response = await client.get("/api/v1/jobs/1")
+        app.dependency_overrides.pop(get_job_service, None)
+
+        assert response.status_code == 400
+        assert "service failure" in response.json()["detail"].lower()
 
     @pytest.mark.asyncio
     async def test_create_job_duplicate_conflict(self, client: AsyncClient) -> None:
@@ -268,6 +294,23 @@ class TestJobsAPI:
         assert "must be longer" in response.json()["detail"].lower()
 
     @pytest.mark.asyncio
+    async def test_update_job_duplicate_conflict_returns_409(
+        self, client: AsyncClient
+    ) -> None:
+        class BrokenUpdateService:
+            async def update_job(
+                self, job_id: int, payload: dict[str, Any]
+            ) -> dict[str, Any]:
+                raise BusinessLogicError("job already exists")
+
+        app.dependency_overrides[get_job_service] = lambda: BrokenUpdateService()
+        response = await client.patch("/api/v1/jobs/1", json={"title": "updated"})
+        app.dependency_overrides.pop(get_job_service, None)
+
+        assert response.status_code == 409
+        assert "already exists" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
     async def test_delete_job_success_and_soft_delete_verified(
         self, client: AsyncClient
     ) -> None:
@@ -301,3 +344,18 @@ class TestJobsAPI:
 
         assert first.status_code == 204
         assert second.status_code == 204
+
+    @pytest.mark.asyncio
+    async def test_delete_job_business_error_returns_400(
+        self, client: AsyncClient
+    ) -> None:
+        class BrokenDeleteService:
+            async def delete_job(self, job_id: int) -> bool:
+                raise BusinessLogicError("cannot delete now")
+
+        app.dependency_overrides[get_job_service] = lambda: BrokenDeleteService()
+        response = await client.delete("/api/v1/jobs/1")
+        app.dependency_overrides.pop(get_job_service, None)
+
+        assert response.status_code == 400
+        assert "cannot delete now" in response.json()["detail"].lower()
