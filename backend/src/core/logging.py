@@ -76,10 +76,15 @@ def setup_logging(log_level: str = "INFO") -> None:
         rotation=_daily_or_size_rotation,
         retention="30 days",
         compression="zip",
-        serialize=True,
         enqueue=True,
         backtrace=False,
         diagnose=False,
+        format=(
+            "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | "
+            "{name}:{function}:{line} | "
+            "request_id={extra[request_id]} method={extra[method]} "
+            "path={extra[path]} status={extra[status_code]} - {message}"
+        ),
     )
 
     logger.add(
@@ -88,10 +93,15 @@ def setup_logging(log_level: str = "INFO") -> None:
         rotation="100 MB",
         retention="90 days",
         compression="zip",
-        serialize=True,
         enqueue=True,
         backtrace=True,
         diagnose=settings.DEBUG,
+        format=(
+            "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | "
+            "{name}:{function}:{line} | "
+            "request_id={extra[request_id]} method={extra[method]} "
+            "path={extra[path]} status={extra[status_code]} - {message}"
+        ),
     )
 
 
