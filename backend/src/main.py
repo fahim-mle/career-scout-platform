@@ -17,6 +17,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from src.api import api_router
 from src.api.deps import get_request_id as _get_request_id
 from src.core.config import settings
+from src.core.logging import setup_logging
+
+setup_logging(settings.LOG_LEVEL)
 
 
 async def request_logging_middleware(request: Request, call_next: Any) -> Response:
