@@ -24,5 +24,15 @@ Coverage is enforced at a minimum of 80%.
 After `make test-cov`, open the HTML coverage report:
 
 ```bash
+# Linux
 xdg-open htmlcov/index.html
+
+# macOS
+open htmlcov/index.html
+
+# Windows (cmd)
+start htmlcov/index.html
+
+# Windows (PowerShell)
+Start-Process htmlcov/index.html
 ```

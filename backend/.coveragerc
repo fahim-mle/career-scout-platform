@@ -1,5 +1,8 @@
 [run]
 source = src
+omit =
+    */tests/*
+    */migrations/*
 
 [report]
 fail_under = 80

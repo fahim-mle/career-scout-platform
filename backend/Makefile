@@ -1,4 +1,4 @@
-.PHONY: test test-cov test-fast test-verbose
+.PHONY: test test-cov test-fast test-verbose clean
 
 PYTEST ?= .venv/bin/pytest
 
@@ -13,3 +13,6 @@ test-fast:
 
 test-verbose:
 	$(PYTEST) -v
+
+clean:
+	rm -rf htmlcov .coverage
