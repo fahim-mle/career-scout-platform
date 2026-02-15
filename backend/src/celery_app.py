@@ -25,9 +25,8 @@ celery_app.conf.update(
     enable_utc=True,
     beat_schedule={
         "daily-linkedin-scrape": {
-            "task": "src.tasks.scraper_tasks.scrape_linkedin_jobs",
+            "task": "src.tasks.scraper_tasks.scrape_linkedin_profile_set",
             "schedule": crontab(hour=9, minute=0),
-            "args": ("Software Engineer", "Brisbane, Australia", 10),
         }
     },
 )

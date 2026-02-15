@@ -68,6 +68,8 @@ docker compose up -d --build
 ### Scraper Notes (Milestone 2)
 - Playwright base scraper and Celery worker/beat setup are in progress for LinkedIn automation.
 - For account safety, prefer a secondary LinkedIn account for automated scraping.
+- Daily scrape now runs profile-based searches from `backend/src/scrapers/config/linkedin_search_profiles.json`.
+- Current profile set prioritizes Brisbane first, then broader Australia relocation-friendly searches.
 
 ### Observability
 - Prometheus scrapes backend metrics target at `backend:8000/metrics` every 15s.
