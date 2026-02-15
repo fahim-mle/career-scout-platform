@@ -122,7 +122,7 @@ services:
     container_name: career-scout-grafana
     restart: unless-stopped
     environment:
-      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER}
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_password
       GF_USERS_ALLOW_SIGN_UP: "false"
     secrets:
