@@ -24,6 +24,7 @@ from src.scrapers.linkedin import (
 
 MAX_LINKEDIN_SCRAPE_LIMIT = 10
 MAX_SCRAPER_TASK_RETRIES = 3
+# Fixed retry delay keeps retry timing deterministic.
 DEFAULT_RETRY_COUNTDOWN_SECONDS = 60
 
 
@@ -151,26 +152,14 @@ def test_task(self: DatabaseTask, message: str = "Celery is working") -> dict[st
         Dictionary containing execution status and message.
 
     Raises:
-        Exception: Re-raises unexpected task execution exceptions.
+        None.
     """
-    try:
-        logger.info(
-            "Executing Celery test task", message=message, task_id=self.request.id
-        )
-        response = {"status": "success", "message": message}
-        logger.info(
-            "Celery test task completed", response=response, task_id=self.request.id
-        )
-        return response
-    except Exception as exc:
-        logger.error(
-            "Celery test task failed",
-            message=message,
-            task_id=self.request.id,
-            error=str(exc),
-            exc_info=True,
-        )
-        raise
+    logger.info("Executing Celery test task", message=message, task_id=self.request.id)
+    response = {"status": "success", "message": message}
+    logger.info(
+        "Celery test task completed", response=response, task_id=self.request.id
+    )
+    return response
 
 
 def _exception_chain(exc: BaseException) -> list[BaseException]:

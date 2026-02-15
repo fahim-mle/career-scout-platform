@@ -33,6 +33,53 @@ class LinkedInScraper(BaseScraper):
     )
     JITTER_MIN_SECONDS = 0.2
     JITTER_MAX_SECONDS = 0.8
+    DESCRIPTION_SELECTORS = (
+        ".show-more-less-html__markup",
+        ".jobs-description-content__text",
+        ".jobs-description__content",
+        "div.jobs-description-content__text--stretch",
+        "#job-details",
+        ".description__text",
+        ".jobs-box__html-content",
+        ".jobs-description__container",
+    )
+    CARD_DESCRIPTION_SELECTORS = (
+        ".base-search-card__snippet",
+        ".job-search-card__snippet",
+    )
+    DESCRIPTION_TIMEOUT_MS = 3000
+    SHORT_DESCRIPTION_MAX_LENGTH = 360
+    JOB_CARD_SELECTORS = (
+        "ul.jobs-search__results-list li",
+        "ul.scaffold-layout__list-container li.jobs-search-results__list-item",
+        "li.jobs-search-results__list-item",
+        "[data-occludable-job-id]",
+        "li.scaffold-layout__list-item",
+        "div.scaffold-layout__list-container li",
+    )
+    JOB_LINK_SELECTORS = (
+        "a.base-card__full-link",
+        "a.job-card-container__link",
+        "a.job-card-list__title--link",
+        "a[data-control-name='job_card_click']",
+    )
+    TITLE_SELECTORS = (
+        "h3.base-search-card__title",
+        "a.job-card-list__title--link",
+        ".job-card-list__title",
+        "h3 a",
+    )
+    COMPANY_SELECTORS = (
+        "h4.base-search-card__subtitle",
+        ".job-card-container__company-name",
+        "a.job-card-container__company-name",
+        ".artdeco-entity-lockup__subtitle span",
+    )
+    LOCATION_SELECTORS = (
+        "span.job-search-card__location",
+        ".job-card-container__metadata-item",
+        ".artdeco-entity-lockup__caption span",
+    )
 
     async def login(self) -> None:
         """Authenticate into LinkedIn using configured credentials.
@@ -68,7 +115,7 @@ class LinkedInScraper(BaseScraper):
             await self.page.fill("#username", email)
             await self.page.fill("#password", password)
             await self.page.click('button[type="submit"]')
-            await self.page.wait_for_load_state("networkidle")
+            await self.page.wait_for_load_state("domcontentloaded")
             await self._assert_no_challenge(stage="post_login")
 
             if "login" in self.page.url.lower():
@@ -109,7 +156,9 @@ class LinkedInScraper(BaseScraper):
             List of normalized job dictionaries.
 
         Raises:
-            RuntimeError: If navigation or page extraction setup fails.
+            RuntimeError: If scraper page is not initialized.
+            LinkedInNonRetryableError: If LinkedIn returns deterministic auth/challenge flow.
+            LinkedInTransientError: If search loading fails due to retryable conditions.
         """
         if self.page is None:
             raise RuntimeError("Scraper page is not initialized")
@@ -127,9 +176,6 @@ class LinkedInScraper(BaseScraper):
             await self.page.goto(search_url, wait_until="domcontentloaded")
             await self._assert_no_challenge(stage="search_page")
             await self._rate_limit_with_jitter()
-            await self.page.wait_for_selector(
-                "ul.jobs-search__results-list li", timeout=8000
-            )
         except PlaywrightTimeoutError:
             logger.bind(
                 scraper=self.__class__.__name__,
@@ -137,6 +183,8 @@ class LinkedInScraper(BaseScraper):
                 location=location,
             ).warning("No LinkedIn job cards found before timeout")
             return []
+        except LinkedInNonRetryableError:
+            raise
         except Exception as exc:
             logger.bind(scraper=self.__class__.__name__, error=str(exc)).error(
                 "Failed to load LinkedIn jobs search page"
@@ -145,7 +193,15 @@ class LinkedInScraper(BaseScraper):
                 "Failed to load LinkedIn jobs search page"
             ) from exc
 
-        cards = await self.page.query_selector_all("ul.jobs-search__results-list li")
+        cards = await self._collect_job_cards()
+        if not cards:
+            logger.bind(
+                scraper=self.__class__.__name__,
+                query=query,
+                location=location,
+            ).warning("No LinkedIn job cards found before timeout")
+            return []
+
         jobs: list[dict[str, Any]] = []
 
         for card in cards:
@@ -169,6 +225,29 @@ class LinkedInScraper(BaseScraper):
         )
         return jobs
 
+    async def _collect_job_cards(self) -> list[ElementHandle]:
+        """Collect visible job card elements using resilient selector fallbacks.
+
+        Returns:
+            List of matched card elements or an empty list when no cards are available.
+
+        Raises:
+            RuntimeError: If scraper page is not initialized.
+        """
+        if self.page is None:
+            raise RuntimeError("Scraper page is not initialized")
+
+        for _ in range(4):
+            for selector in self.JOB_CARD_SELECTORS:
+                cards = await self.page.query_selector_all(selector)
+                if cards:
+                    return cards
+
+            await self.page.mouse.wheel(0, 1200)
+            await self.rate_limit(seconds=0.8)
+
+        return []
+
     async def _parse_job_card(
         self,
         card: ElementHandle,
@@ -181,7 +260,7 @@ class LinkedInScraper(BaseScraper):
         Returns:
             Parsed job payload dictionary when required fields exist, else ``None``.
         """
-        link_element = await card.query_selector("a.base-card__full-link")
+        link_element = await self._query_first(card, self.JOB_LINK_SELECTORS)
         if link_element is None:
             return None
 
@@ -197,12 +276,17 @@ class LinkedInScraper(BaseScraper):
             )
             return None
 
-        title = await self._extract_text(card, "h3.base-search-card__title")
-        company = await self._extract_text(card, "h4.base-search-card__subtitle")
-        location = await self._extract_text(card, "span.job-search-card__location")
+        title = await self._extract_first_text(card, self.TITLE_SELECTORS)
+        company = await self._extract_first_text(card, self.COMPANY_SELECTORS)
+        location = await self._extract_first_text(card, self.LOCATION_SELECTORS)
 
         if not title or not company or not location:
             return None
+
+        description_full = await self._extract_job_description(card=card)
+        description_short = self._build_short_description(
+            description_full=description_full
+        )
 
         return {
             "external_id": external_id,
@@ -211,8 +295,131 @@ class LinkedInScraper(BaseScraper):
             "title": title,
             "company": company,
             "location": location,
+            "description_full": description_full,
+            "description_short": description_short,
             "scraped_at": datetime.now(timezone.utc),
         }
+
+    async def _extract_job_description(self, card: ElementHandle) -> str | None:
+        """Extract full job description with selector fallbacks.
+
+        Args:
+            card: Card element handle currently being parsed.
+
+        Returns:
+            Normalized full description text when found, otherwise ``None``.
+        """
+        if self.page is None:
+            raise RuntimeError("Scraper page is not initialized")
+
+        try:
+            link_element = await self._query_first(card, self.JOB_LINK_SELECTORS)
+            if link_element is not None:
+                await link_element.click(timeout=self.DESCRIPTION_TIMEOUT_MS)
+            else:
+                await card.click(timeout=self.DESCRIPTION_TIMEOUT_MS)
+
+            await self._rate_limit_with_jitter(base_seconds=0.2)
+            await self.rate_limit(seconds=0.25)
+
+            page_description = await self._extract_text_from_page_selectors(
+                selectors=self.DESCRIPTION_SELECTORS
+            )
+            if page_description:
+                return page_description
+
+            return await self._extract_text_from_card_selectors(
+                card=card,
+                selectors=self.CARD_DESCRIPTION_SELECTORS,
+            )
+        except PlaywrightTimeoutError as exc:
+            logger.bind(scraper=self.__class__.__name__, error=str(exc)).warning(
+                "Timed out while extracting LinkedIn job description"
+            )
+            return None
+        except Exception as exc:
+            logger.bind(scraper=self.__class__.__name__, error=str(exc)).warning(
+                "Failed to extract LinkedIn job description"
+            )
+            return None
+
+    async def _extract_text_from_page_selectors(
+        self,
+        selectors: tuple[str, ...],
+    ) -> str | None:
+        """Extract normalized text from first matching page selector.
+
+        Args:
+            selectors: Ordered CSS selector fallbacks.
+
+        Returns:
+            Normalized text when found, otherwise ``None``.
+
+        Raises:
+            RuntimeError: If scraper page is not initialized.
+        """
+        if self.page is None:
+            raise RuntimeError("Scraper page is not initialized")
+
+        for selector in selectors:
+            element = await self.page.query_selector(selector)
+            if element is None:
+                continue
+            try:
+                raw_text = await element.inner_text()
+                normalized = self._normalize_text(raw_text)
+                if normalized:
+                    return normalized
+            except PlaywrightTimeoutError:
+                continue
+
+        return None
+
+    async def _extract_text_from_card_selectors(
+        self,
+        card: ElementHandle,
+        selectors: tuple[str, ...],
+    ) -> str | None:
+        """Extract normalized text from first matching selector inside a card.
+
+        Args:
+            card: Card element handle.
+            selectors: Ordered CSS selector fallbacks.
+
+        Returns:
+            Normalized text when found, otherwise ``None``.
+        """
+        for selector in selectors:
+            element = await card.query_selector(selector)
+            if element is None:
+                continue
+            raw_text = await element.inner_text()
+            normalized = self._normalize_text(raw_text)
+            if normalized:
+                return normalized
+
+        return None
+
+    @classmethod
+    def _build_short_description(cls, description_full: str | None) -> str | None:
+        """Create a short summary from full description text.
+
+        Args:
+            description_full: Full normalized description text.
+
+        Returns:
+            Truncated description summary or ``None`` when full text is missing.
+        """
+        if not description_full:
+            return None
+
+        if len(description_full) <= cls.SHORT_DESCRIPTION_MAX_LENGTH:
+            return description_full
+
+        cutoff = description_full.rfind(" ", 0, cls.SHORT_DESCRIPTION_MAX_LENGTH)
+        if cutoff <= 0:
+            cutoff = cls.SHORT_DESCRIPTION_MAX_LENGTH
+        return f"{description_full[:cutoff].rstrip()}..."
 
     @classmethod
     def _build_search_url(cls, query: str, location: str) -> str:
@@ -285,6 +492,60 @@ class LinkedInScraper(BaseScraper):
             return None
 
         value = await element.inner_text()
+        return self._normalize_text(value)
+
+    async def _extract_first_text(
+        self,
+        card: ElementHandle,
+        selectors: tuple[str, ...],
+    ) -> str | None:
+        """Extract first non-empty normalized text from selector fallbacks.
+
+        Args:
+            card: Card element handle.
+            selectors: Ordered CSS selector fallbacks.
+
+        Returns:
+            Normalized text when available, otherwise ``None``.
+        """
+        for selector in selectors:
+            value = await self._extract_text(card, selector)
+            if value:
+                return value
+
+        return None
+
+    async def _query_first(
+        self,
+        card: ElementHandle,
+        selectors: tuple[str, ...],
+    ) -> ElementHandle | None:
+        """Return first matching element for provided selector fallbacks.
+
+        Args:
+            card: Card element handle.
+            selectors: Ordered CSS selector fallbacks.
+
+        Returns:
+            First matched element or ``None``.
+        """
+        for selector in selectors:
+            element = await card.query_selector(selector)
+            if element is not None:
+                return element
+
+        return None
+
+    @staticmethod
+    def _normalize_text(value: str) -> str | None:
+        """Normalize text by collapsing whitespace.
+
+        Args:
+            value: Raw text value.
+
+        Returns:
+            Normalized string or ``None`` when the value is empty.
+        """
         normalized = " ".join(value.split())
         return normalized if normalized else None
 

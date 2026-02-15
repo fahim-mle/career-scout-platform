@@ -54,8 +54,12 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD_FILE: /run/secrets/db_password
       REDIS_URL: redis://redis:6379/0
+      SCRAPER_ENABLED: ${SCRAPER_ENABLED:-false}
+      LINKEDIN_EMAIL: ${LINKEDIN_EMAIL:-}
+      LINKEDIN_PASSWORD_FILE: /run/secrets/linkedin_password
     secrets:
       - db_password
+      - linkedin_password
     ports:
       - "8000:8000"
     networks:
@@ -78,7 +82,7 @@ services:
       dockerfile: Dockerfile
     container_name: career-scout-celery-worker
     restart: unless-stopped
-    command: ["python", "-m", "celery", "-A", "src.celery_app.celery_app", "worker", "--loglevel=INFO"]
+    command: ["python", "-m", "celery", "-A", "src.celery_app.celery_app", "worker", "--loglevel=INFO", "--concurrency=1"]
     environment:
       ENV: local
       DB_HOST: postgres
@@ -87,8 +91,12 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD_FILE: /run/secrets/db_password
       REDIS_URL: redis://redis:6379/0
+      SCRAPER_ENABLED: ${SCRAPER_ENABLED:-false}
+      LINKEDIN_EMAIL: ${LINKEDIN_EMAIL:-}
+      LINKEDIN_PASSWORD_FILE: /run/secrets/linkedin_password
     secrets:
       - db_password
+      - linkedin_password
     networks:
       - app-network
     healthcheck:
@@ -105,7 +113,7 @@ services:
       dockerfile: Dockerfile
     container_name: career-scout-celery-beat
     restart: unless-stopped
-    command: ["python", "-m", "celery", "-A", "src.celery_app.celery_app", "beat", "--loglevel=INFO"]
+    command: ["python", "-m", "celery", "-A", "src.celery_app.celery_app", "beat", "--loglevel=INFO", "--pidfile="]
     environment:
       ENV: local
       DB_HOST: postgres
@@ -114,8 +122,12 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD_FILE: /run/secrets/db_password
       REDIS_URL: redis://redis:6379/0
+      SCRAPER_ENABLED: ${SCRAPER_ENABLED:-false}
+      LINKEDIN_EMAIL: ${LINKEDIN_EMAIL:-}
+      LINKEDIN_PASSWORD_FILE: /run/secrets/linkedin_password
     secrets:
       - db_password
+      - linkedin_password
     networks:
       - app-network
     healthcheck:
@@ -220,3 +232,5 @@ secrets:
     file: ./secrets/db_password.txt
   grafana_password:
     file: ./secrets/grafana_password.txt
+  linkedin_password:
+    file: ./secrets/linkedin_password.txt

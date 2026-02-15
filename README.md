@@ -27,12 +27,13 @@ Set these required values in `.env`:
 - `PGADMIN_DEFAULT_PASSWORD`
 - `GRAFANA_USER`
 - `LINKEDIN_EMAIL` (for scraper milestone)
-- `LINKEDIN_PASSWORD` (for scraper milestone)
+- `LINKEDIN_PASSWORD_FILE` (for scraper milestone, recommended: `secrets/linkedin_password.txt`)
 
 Password flow in this project:
 - `postgres` reads `secrets/db_password.txt` via Docker secret `db_password`.
 - `backend` reads `DB_PASSWORD_FILE=/run/secrets/db_password` in Compose.
 - `DB_PASSWORD` in `.env` is fallback for non-Compose direct runs.
+- `backend`, `celery-worker`, and `celery-beat` read `LINKEDIN_PASSWORD_FILE=/run/secrets/linkedin_password` in Compose.
 
 If `DB_PASSWORD` and `secrets/db_password.txt` are different when running locally outside shared-secret mode, DB authentication can fail.
 
