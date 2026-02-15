@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"
 
+    # Scraper credentials
+    SCRAPER_ENABLED: bool = False
+    LINKEDIN_EMAIL: str = ""
+    LINKEDIN_PASSWORD: str = ""
+    LINKEDIN_PASSWORD_FILE: str = ""
+
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", case_sensitive=True, extra="ignore"
     )
@@ -131,6 +137,23 @@ class Settings(BaseSettings):
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
         )
         return self._normalize_async_database_url(built_url)
+
+    @property
+    def resolved_linkedin_password(self) -> str:
+        """Resolve LinkedIn password from secrets file or environment.
+
+        Returns:
+            Password read from ``LINKEDIN_PASSWORD_FILE`` when available,
+            otherwise the ``LINKEDIN_PASSWORD`` setting.
+        """
+        if self.LINKEDIN_PASSWORD_FILE:
+            try:
+                password_file = Path(self.LINKEDIN_PASSWORD_FILE)
+                if password_file.is_file():
+                    return password_file.read_text(encoding="utf-8").rstrip()
+            except OSError:
+                return self.LINKEDIN_PASSWORD
+        return self.LINKEDIN_PASSWORD
 
     def _normalize_async_database_url(self, database_url: str) -> str:
         """Normalize PostgreSQL URL to SQLAlchemy asyncpg format.
