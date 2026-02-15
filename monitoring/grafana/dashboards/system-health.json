@@ -153,7 +153,7 @@
           "color": {
             "mode": "palette-classic"
           },
-          "unit": "ops"
+          "unit": "short"
         },
         "overrides": []
       },
