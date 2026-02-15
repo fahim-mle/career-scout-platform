@@ -12,11 +12,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from loguru import logger
+from prometheus_fastapi_instrumentator import Instrumentator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.api import api_router
 from src.api.deps import get_request_id as _get_request_id
 from src.core.config import settings
+from src.core.logging import setup_logging
 
 
 async def request_logging_middleware(request: Request, call_next: Any) -> Response:
@@ -36,37 +38,34 @@ async def request_logging_middleware(request: Request, call_next: Any) -> Respon
     request.state.request_id = request_id
     started_at = time.perf_counter()
 
-    logger.info(
-        "Request started",
+    logger.bind(
         request_id=request_id,
         method=request.method,
         path=request.url.path,
-    )
+    ).info("Request started")
 
     try:
         response = await call_next(request)
     except Exception as exc:
         duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
-        logger.error(
-            "Request failed",
+        logger.bind(
             request_id=request_id,
             method=request.method,
             path=request.url.path,
             duration_ms=duration_ms,
             error=str(exc),
-        )
+        ).error("Request failed")
         raise
 
     duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
     response.headers["X-Request-ID"] = request_id
-    logger.info(
-        "Request completed",
+    logger.bind(
         request_id=request_id,
         method=request.method,
         path=request.url.path,
         status_code=response.status_code,
         duration_ms=duration_ms,
-    )
+    ).info("Request completed")
     return response
 
 
@@ -87,13 +86,12 @@ async def handle_http_exception(
     detail = (
         exc.detail if isinstance(exc.detail, (str, list, dict)) else "Request failed"
     )
-    logger.warning(
-        "HTTP exception raised",
+    logger.bind(
         request_id=request_id,
         status_code=exc.status_code,
         detail=detail,
         path=request.url.path,
-    )
+    ).warning("HTTP exception raised")
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": detail, "request_id": request_id},
@@ -121,12 +119,11 @@ async def handle_validation_exception(
         copied_error.pop("input", None)
         sanitized_errors.append(copied_error)
 
-    logger.warning(
-        "Validation exception raised",
+    logger.bind(
         request_id=request_id,
         path=request.url.path,
         errors=sanitized_errors,
-    )
+    ).warning("Validation exception raised")
     return JSONResponse(
         status_code=422,
         content={
@@ -148,12 +145,11 @@ async def handle_unexpected_exception(request: Request, exc: Exception) -> JSONR
         JSONResponse payload with generic error detail and request id.
     """
     request_id = _get_request_id(request)
-    logger.exception(
-        "Unhandled exception",
+    logger.bind(
         request_id=request_id,
         path=request.url.path,
         error=str(exc),
-    )
+    ).exception("Unhandled exception")
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error", "request_id": request_id},
@@ -166,6 +162,8 @@ def create_app() -> FastAPI:
     Returns:
         Configured FastAPI application instance.
     """
+    setup_logging(settings.LOG_LEVEL)
+
     app = FastAPI(
         title=settings.PROJECT_NAME,
         version=settings.VERSION,
@@ -190,11 +188,16 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)
 
-    logger.info(
-        "Application configured",
+    Instrumentator(excluded_handlers=["/metrics"]).instrument(app).expose(
+        app,
+        endpoint="/metrics",
+        include_in_schema=False,
+    )
+
+    logger.bind(
         environment=settings.ENVIRONMENT,
         api_prefix=settings.API_V1_PREFIX,
-    )
+    ).info("Application configured")
     return app
 
 
