@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.metrics import db_query_timer
 from src.core.exceptions import DuplicateJobError, RepositoryError
 from src.models.job import Job
 from src.repositories.base import BaseRepository
@@ -45,7 +46,8 @@ class JobRepository(BaseRepository[Job]):
         log.debug("Fetching job by id")
 
         try:
-            result = await self.db.execute(select(Job).where(Job.id == job_id))
+            with db_query_timer(query_type="get_by_id"):
+                result = await self.db.execute(select(Job).where(Job.id == job_id))
             job = result.scalar_one_or_none()
             log.bind(found=job is not None).debug("Fetched job by id")
             return job
@@ -96,9 +98,10 @@ class JobRepository(BaseRepository[Job]):
             if platform is not None:
                 query = query.where(Job.platform == platform)
 
-            result = await self.db.execute(
-                query.order_by(Job.id.desc()).offset(skip).limit(limit)
-            )
+            with db_query_timer(query_type="get_all"):
+                result = await self.db.execute(
+                    query.order_by(Job.id.desc()).offset(skip).limit(limit)
+                )
             jobs = self._to_list(result.scalars().all())
             log.bind(count=len(jobs)).debug("Fetched paginated jobs")
             return jobs
@@ -128,8 +131,9 @@ class JobRepository(BaseRepository[Job]):
                 blocked = ", ".join(sorted(invalid))
                 raise ValueError(f"Cannot set protected fields: {blocked}")
             job = Job(**job_data)
-            self.db.add(job)
-            created_job = await self._commit_and_refresh(job)
+            with db_query_timer(query_type="create"):
+                self.db.add(job)
+                created_job = await self._commit_and_refresh(job)
             log.bind(job_id=created_job.id).info("Created job")
             return created_job
         except IntegrityError as exc:
@@ -170,7 +174,8 @@ class JobRepository(BaseRepository[Job]):
         log.info("Updating job")
 
         try:
-            result = await self.db.execute(select(Job).where(Job.id == job_id))
+            with db_query_timer(query_type="update_lookup"):
+                result = await self.db.execute(select(Job).where(Job.id == job_id))
             job = result.scalar_one_or_none()
         except SQLAlchemyError as exc:
             log.bind(error=str(exc)).error("Failed to fetch job for update")
@@ -188,7 +193,8 @@ class JobRepository(BaseRepository[Job]):
             setattr(job, field, value)
 
         try:
-            updated_job = await self._commit_and_refresh(job)
+            with db_query_timer(query_type="update"):
+                updated_job = await self._commit_and_refresh(job)
             log.info("Updated job")
             return updated_job
         except IntegrityError as exc:

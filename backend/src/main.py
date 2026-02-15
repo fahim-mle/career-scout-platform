@@ -12,6 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from loguru import logger
+from prometheus_fastapi_instrumentator import Instrumentator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.api import api_router
@@ -192,6 +193,12 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, handle_unexpected_exception)
 
     app.include_router(api_router, prefix=settings.API_V1_PREFIX)
+
+    Instrumentator(excluded_handlers=["/metrics"]).instrument(app).expose(
+        app,
+        endpoint="/metrics",
+        include_in_schema=False,
+    )
 
     logger.info(
         "Application configured",

@@ -13,6 +13,7 @@ from src.core.exceptions import (
     NotFoundError,
     RepositoryError,
 )
+from src.core.metrics import increment_jobs_created
 from src.models.job import ALLOWED_PLATFORMS, Job
 from src.repositories.job import JobRepository
 from src.schemas.job import JobCreate, JobResponse, JobUpdate
@@ -145,7 +146,7 @@ class JobService:
         self._validate_url_for_platform(str(payload.url), payload.platform)
 
         try:
-            job_data = payload.model_dump(mode="python")
+            job_data = payload.model_dump(mode="python", exclude_unset=True)
             job_data["url"] = str(payload.url)
             job = await self.repo.create(job_data)
         except DuplicateJobError as exc:
@@ -156,6 +157,13 @@ class JobService:
         except (RepositoryError, ValueError) as exc:
             log.bind(error=str(exc)).error("Failed to create job")
             raise BusinessLogicError(f"Failed to create job: {exc}") from exc
+
+        try:
+            increment_jobs_created(platform=job.platform)
+        except ValueError as exc:
+            log.bind(error=str(exc), platform=job.platform).warning(
+                "Skipped jobs_created_total metric"
+            )
 
         log.bind(job_id=job.id).info("Created job")
         return JobResponse.model_validate(job)
