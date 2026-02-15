@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import re
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +26,9 @@ def _daily_or_size_rotation(message: Any, file: Any) -> bool:
         ``True`` when the sink should rotate.
     """
     record_time = message.record["time"]
-    current_file_date = Path(file.name).stem.split("_")[-1]
+    file_name = Path(file.name).stem
+    date_match = re.search(r"\d{4}-\d{2}-\d{2}", file_name)
+    current_file_date = date_match.group(0) if date_match else ""
     if record_time.strftime("%Y-%m-%d") != current_file_date:
         return True
     return file.tell() >= MAX_LOG_FILE_BYTES

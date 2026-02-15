@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from typing import Iterator, cast
 
 from loguru import logger
-from prometheus_client import REGISTRY, Counter, Histogram
+from prometheus_client import Counter, Histogram
 
 _METRICS_CACHE: dict[str, Counter | Histogram] = globals().get("_METRICS_CACHE", {})
 
@@ -34,12 +34,10 @@ def _get_or_create_counter(
     try:
         counter = Counter(name=name, documentation=documentation, labelnames=labelnames)
     except ValueError as exc:
-        existing = getattr(REGISTRY, "_names_to_collectors", {}).get(name)
-        if existing is not None:
-            counter = cast(Counter, existing)
-            logger.debug("Reused existing counter collector", metric=name)
-        else:
-            raise exc
+        logger.debug(
+            "Failed to initialize counter collector", metric=name, error=str(exc)
+        )
+        raise
 
     _METRICS_CACHE[name] = counter
     return counter
@@ -69,12 +67,12 @@ def _get_or_create_histogram(
             name=name, documentation=documentation, labelnames=labelnames
         )
     except ValueError as exc:
-        existing = getattr(REGISTRY, "_names_to_collectors", {}).get(name)
-        if existing is not None:
-            histogram = cast(Histogram, existing)
-            logger.debug("Reused existing histogram collector", metric=name)
-        else:
-            raise exc
+        logger.debug(
+            "Failed to initialize histogram collector",
+            metric=name,
+            error=str(exc),
+        )
+        raise
 
     _METRICS_CACHE[name] = histogram
     return histogram

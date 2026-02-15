@@ -52,7 +52,7 @@ docker compose up -d --build
 - Health endpoint: `http://localhost:8000/api/v1/health`
 - pgAdmin: `http://localhost:5050`
 - Prometheus: `http://localhost:9090`
-- Grafana: `http://localhost:3001` (default login `admin/admin`)
+- Grafana: `http://localhost:3001` (user from `GRAFANA_USER`, password from `secrets/grafana_password.txt`)
 
 ### Jobs API (current)
 - `GET /api/v1/jobs`

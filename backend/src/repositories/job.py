@@ -233,7 +233,8 @@ class JobRepository(BaseRepository[Job]):
         log.info("Deleting job")
 
         try:
-            result = await self.db.execute(select(Job).where(Job.id == job_id))
+            with db_query_timer(query_type="delete_lookup"):
+                result = await self.db.execute(select(Job).where(Job.id == job_id))
             job = result.scalar_one_or_none()
         except SQLAlchemyError as exc:
             log.bind(error=str(exc)).error("Failed to fetch job for delete")
@@ -244,8 +245,9 @@ class JobRepository(BaseRepository[Job]):
             return False
 
         try:
-            await self.db.delete(job)
-            await self.db.commit()
+            with db_query_timer(query_type="delete"):
+                await self.db.delete(job)
+                await self.db.commit()
             log.info("Deleted job")
             return True
         except SQLAlchemyError as exc:
@@ -274,12 +276,13 @@ class JobRepository(BaseRepository[Job]):
         log.debug("Fetching job by external identifier")
 
         try:
-            result = await self.db.execute(
-                select(Job).where(
-                    Job.external_id == external_id,
-                    Job.platform == platform,
+            with db_query_timer(query_type="get_by_external_id"):
+                result = await self.db.execute(
+                    select(Job).where(
+                        Job.external_id == external_id,
+                        Job.platform == platform,
+                    )
                 )
-            )
             job = result.scalar_one_or_none()
             log.bind(found=job is not None).debug("Fetched job by external identifier")
             return job
