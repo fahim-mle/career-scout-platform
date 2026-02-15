@@ -11,7 +11,7 @@ from loguru import logger
 
 from src.core.config import settings
 
-LOG_DIR = Path("logs")
+LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 MAX_LOG_FILE_BYTES = 500 * 1024 * 1024
 
 
@@ -98,7 +98,7 @@ def setup_logging(log_level: str = "INFO") -> None:
         compression="zip",
         enqueue=True,
         backtrace=True,
-        diagnose=settings.DEBUG,
+        diagnose=False,
         format=(
             "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | "
             "{name}:{function}:{line} | "

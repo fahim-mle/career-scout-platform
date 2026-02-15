@@ -25,6 +25,7 @@ Set these required values in `.env`:
 - `DB_PASSWORD`
 - `PGADMIN_DEFAULT_EMAIL`
 - `PGADMIN_DEFAULT_PASSWORD`
+- `GRAFANA_USER`
 
 Password flow in this project:
 - `postgres` reads `secrets/db_password.txt` via Docker secret `db_password`.
