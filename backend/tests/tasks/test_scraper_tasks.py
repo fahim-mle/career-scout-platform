@@ -35,7 +35,7 @@ class FakeBoundTask:
         raise RetryInvoked("retry called")
 
 
-SCRAPE_TASK_RUN = scraper_tasks.scrape_linkedin_jobs.run.__func__
+SCRAPE_TASK_RUN = scraper_tasks.scrape_linkedin_jobs.run.__func__  # type: ignore[attr-defined]
 
 
 def test_scrape_linkedin_jobs_returns_skipped_when_scraper_disabled(
@@ -113,3 +113,43 @@ def test_scrape_linkedin_jobs_retries_on_transient_error(
     assert retry_payload["countdown"] == scraper_tasks.DEFAULT_RETRY_COUNTDOWN_SECONDS
     assert retry_payload["max_retries"] == scraper_tasks.MAX_SCRAPER_TASK_RETRIES
     assert isinstance(retry_payload["exc"], LinkedInTransientError)
+
+
+def test_build_job_update_payload_only_sets_missing_fields() -> None:
+    """Existing values must not be overwritten by enrichment update helper."""
+
+    existing = SimpleNamespace(
+        description_full="already set",
+        description_short=None,
+        job_type=None,
+    )
+    scraped = {
+        "description_full": "new full",
+        "description_short": "new short",
+        "job_type": "Full-Time",
+    }
+
+    result = scraper_tasks._build_job_update_payload(existing, scraped)
+
+    assert result == {
+        "description_short": "new short",
+        "job_type": "Full-Time",
+    }
+
+
+def test_build_job_update_payload_empty_when_no_new_values() -> None:
+    """Update helper should return empty payload when nothing enriches row."""
+
+    existing = SimpleNamespace(
+        description_full="full",
+        description_short="short",
+        job_type="Contract",
+    )
+    scraped = {
+        "description_full": "candidate",
+        "description_short": "candidate",
+        "job_type": "Full-Time",
+    }
+
+    result = scraper_tasks._build_job_update_payload(existing, scraped)
+    assert result == {}

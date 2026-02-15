@@ -37,6 +37,35 @@ LINKEDIN_PROFILE_CONFIG_PATH = (
 MAX_PROFILE_RUNS_PER_TASK = 25
 
 
+def _build_job_update_payload(
+    existing_job: Any,
+    scraped_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a safe update payload for selected LinkedIn enrichments.
+
+    Args:
+        existing_job: Existing ORM job entity from repository lookup.
+        scraped_payload: Newly scraped payload for the same external id.
+
+    Returns:
+        Field map containing only missing description/job-type values.
+    """
+    enrichable_fields = (
+        "description_full",
+        "description_short",
+        "job_type",
+    )
+    updates: dict[str, Any] = {}
+
+    for field in enrichable_fields:
+        current_value = getattr(existing_job, field, None)
+        new_value = scraped_payload.get(field)
+        if current_value is None and new_value is not None:
+            updates[field] = new_value
+
+    return updates
+
+
 async def _run_linkedin_scrape_and_persist(
     query: str,
     location: str,
@@ -73,6 +102,7 @@ async def _run_linkedin_scrape_and_persist(
         )
 
     created_count = 0
+    updated_count = 0
     duplicate_count = 0
     failed_count = 0
 
@@ -95,6 +125,15 @@ async def _run_linkedin_scrape_and_persist(
                     platform="linkedin",
                 )
                 if existing_job is not None:
+                    update_payload = _build_job_update_payload(
+                        existing_job=existing_job,
+                        scraped_payload=job_payload,
+                    )
+                    if update_payload:
+                        await job_repository.update(existing_job.id, update_payload)
+                        updated_count += 1
+                        continue
+
                     duplicate_count += 1
                     continue
 
@@ -127,6 +166,7 @@ async def _run_linkedin_scrape_and_persist(
         "location": location,
         "scraped": len(scraped_jobs),
         "created": created_count,
+        "updated": updated_count,
         "duplicates": duplicate_count,
         "failed": failed_count,
     }
@@ -349,6 +389,7 @@ def scrape_linkedin_profile_set(self: DatabaseTask) -> dict[str, Any]:
     totals = {
         "scraped": 0,
         "created": 0,
+        "updated": 0,
         "duplicates": 0,
         "failed": 0,
     }
@@ -375,6 +416,7 @@ def scrape_linkedin_profile_set(self: DatabaseTask) -> dict[str, Any]:
             )
             totals["scraped"] += int(result.get("scraped", 0))
             totals["created"] += int(result.get("created", 0))
+            totals["updated"] += int(result.get("updated", 0))
             totals["duplicates"] += int(result.get("duplicates", 0))
             totals["failed"] += int(result.get("failed", 0))
 

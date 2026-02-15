@@ -43,11 +43,6 @@ class LinkedInScraper(BaseScraper):
         ".jobs-box__html-content",
         ".jobs-description__container",
     )
-    CARD_DESCRIPTION_SELECTORS = (
-        ".base-search-card__snippet",
-        ".job-search-card__snippet",
-    )
-    DESCRIPTION_TIMEOUT_MS = 3000
     SHORT_DESCRIPTION_MAX_LENGTH = 360
     JOB_CARD_SELECTORS = (
         "ul.jobs-search__results-list li",
@@ -79,6 +74,20 @@ class LinkedInScraper(BaseScraper):
         "span.job-search-card__location",
         ".job-card-container__metadata-item",
         ".artdeco-entity-lockup__caption span",
+    )
+    DETAIL_JOB_TYPE_SELECTORS = (
+        ".job-details-jobs-unified-top-card__job-insight",
+        ".jobs-unified-top-card__job-insight",
+        ".jobs-unified-top-card__workplace-type",
+    )
+    JOB_TYPE_HINTS = (
+        "full-time",
+        "part-time",
+        "contract",
+        "internship",
+        "temporary",
+        "freelance",
+        "casual",
     )
 
     async def login(self) -> None:
@@ -220,10 +229,74 @@ class LinkedInScraper(BaseScraper):
                 )
                 continue
 
+        for job_data in jobs:
+            job_url = str(job_data.get("url", "")).strip()
+            if not job_url:
+                continue
+
+            try:
+                details = await self.scrape_job_details(job_url=job_url)
+                if details:
+                    job_data.update(details)
+            except LinkedInNonRetryableError:
+                raise
+            except Exception as exc:
+                logger.bind(
+                    scraper=self.__class__.__name__,
+                    url=job_url,
+                    error=str(exc),
+                ).warning("Failed to enrich LinkedIn job with detail page data")
+
         logger.bind(scraper=self.__class__.__name__, scraped_count=len(jobs)).info(
             "Completed LinkedIn jobs scrape"
         )
         return jobs
+
+    async def scrape_job_details(self, job_url: str) -> dict[str, Any]:
+        """Scrape selected LinkedIn detail fields from a job detail page.
+
+        Args:
+            job_url: Absolute LinkedIn job detail URL.
+
+        Returns:
+            Dictionary containing optional enrichable fields.
+
+        Raises:
+            RuntimeError: If scraper page is not initialized.
+            LinkedInNonRetryableError: If LinkedIn challenge/auth state is detected.
+            LinkedInTransientError: If detail page cannot be loaded reliably.
+        """
+        if self.page is None:
+            raise RuntimeError("Scraper page is not initialized")
+
+        logger.bind(scraper=self.__class__.__name__, url=job_url).info(
+            "Scraping LinkedIn job details"
+        )
+
+        try:
+            await self.page.goto(job_url, wait_until="domcontentloaded")
+            await self._assert_no_challenge(stage="detail_page")
+            await self._rate_limit_with_jitter()
+        except LinkedInNonRetryableError:
+            raise
+        except PlaywrightTimeoutError as exc:
+            raise LinkedInTransientError(
+                "Timed out loading LinkedIn detail page"
+            ) from exc
+        except Exception as exc:
+            raise LinkedInTransientError("Failed loading LinkedIn detail page") from exc
+
+        description_full = await self._extract_text_from_page_selectors(
+            selectors=self.DESCRIPTION_SELECTORS
+        )
+
+        details: dict[str, Any] = {
+            "description_full": description_full,
+            "description_short": self._build_short_description(description_full),
+            "job_type": await self._extract_job_type(),
+        }
+
+        return {key: value for key, value in details.items() if value is not None}
 
     async def _collect_job_cards(self) -> list[ElementHandle]:
         """Collect visible job card elements using resilient selector fallbacks.
@@ -283,11 +356,6 @@ class LinkedInScraper(BaseScraper):
         if not title or not company or not location:
             return None
 
-        description_full = await self._extract_job_description(card=card)
-        description_short = self._build_short_description(
-            description_full=description_full
-        )
-
         return {
             "external_id": external_id,
             "platform": self.PLATFORM,
@@ -295,53 +363,8 @@ class LinkedInScraper(BaseScraper):
             "title": title,
             "company": company,
             "location": location,
-            "description_full": description_full,
-            "description_short": description_short,
             "scraped_at": datetime.now(timezone.utc),
         }
-
-    async def _extract_job_description(self, card: ElementHandle) -> str | None:
-        """Extract full job description with selector fallbacks.
-
-        Args:
-            card: Card element handle currently being parsed.
-
-        Returns:
-            Normalized full description text when found, otherwise ``None``.
-        """
-        if self.page is None:
-            raise RuntimeError("Scraper page is not initialized")
-
-        try:
-            link_element = await self._query_first(card, self.JOB_LINK_SELECTORS)
-            if link_element is not None:
-                await link_element.click(timeout=self.DESCRIPTION_TIMEOUT_MS)
-            else:
-                await card.click(timeout=self.DESCRIPTION_TIMEOUT_MS)
-
-            await self._rate_limit_with_jitter(base_seconds=0.2)
-            await self.rate_limit(seconds=0.25)
-
-            page_description = await self._extract_text_from_page_selectors(
-                selectors=self.DESCRIPTION_SELECTORS
-            )
-            if page_description:
-                return page_description
-
-            return await self._extract_text_from_card_selectors(
-                card=card,
-                selectors=self.CARD_DESCRIPTION_SELECTORS,
-            )
-        except PlaywrightTimeoutError as exc:
-            logger.bind(scraper=self.__class__.__name__, error=str(exc)).warning(
-                "Timed out while extracting LinkedIn job description"
-            )
-            return None
-        except Exception as exc:
-            logger.bind(scraper=self.__class__.__name__, error=str(exc)).warning(
-                "Failed to extract LinkedIn job description"
-            )
-            return None
 
     async def _extract_text_from_page_selectors(
         self,
@@ -375,28 +398,22 @@ class LinkedInScraper(BaseScraper):
 
         return None
 
-    async def _extract_text_from_card_selectors(
-        self,
-        card: ElementHandle,
-        selectors: tuple[str, ...],
-    ) -> str | None:
-        """Extract normalized text from first matching selector inside a card.
-
-        Args:
-            card: Card element handle.
-            selectors: Ordered CSS selector fallbacks.
+    async def _extract_job_type(self) -> str | None:
+        """Extract job type value from detail page insights.
 
         Returns:
-            Normalized text when found, otherwise ``None``.
+            Normalized job type text when found, otherwise ``None``.
         """
-        for selector in selectors:
-            element = await card.query_selector(selector)
-            if element is None:
-                continue
-            raw_text = await element.inner_text()
-            normalized = self._normalize_text(raw_text)
-            if normalized:
-                return normalized
+        insight_text = await self._extract_text_from_page_selectors(
+            selectors=self.DETAIL_JOB_TYPE_SELECTORS
+        )
+        if not insight_text:
+            return None
+
+        lower_insight = insight_text.lower()
+        for hint in self.JOB_TYPE_HINTS:
+            if hint in lower_insight:
+                return hint.title()
 
         return None
 
