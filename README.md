@@ -1,10 +1,20 @@
 ## Career Scout Platform
 
-### Setup
+Career Scout is a job-tracking backend platform for collecting and managing job listings, with built-in observability for local development.
 
-#### Prerequisites
+### What it does (current status)
+- Provides a FastAPI backend with request-level logging and standardized error responses.
+- Exposes Jobs CRUD APIs (`/api/v1/jobs`) with business rules (immutability, soft delete, validation).
+- Includes health checks at `/api/v1/health`.
+- Provides OpenAPI/Swagger docs for API exploration.
+- Ships with PostgreSQL, Redis, pgAdmin, Prometheus, and Grafana in Docker Compose.
+- Includes production-style Loguru logging (colored console, rotated file logs, separate error logs).
+
+### Prerequisites
 - Docker
 - Docker Compose (`docker compose`)
+
+### Quick start
 
 #### 1) Configure environment variables
 ```bash
@@ -16,12 +26,12 @@ Set these required values in `.env`:
 - `PGADMIN_DEFAULT_EMAIL`
 - `PGADMIN_DEFAULT_PASSWORD`
 
-Password source in this project:
+Password flow in this project:
 - `postgres` reads `secrets/db_password.txt` via Docker secret `db_password`.
-- `backend` (in Docker Compose) reads `DB_PASSWORD_FILE=/run/secrets/db_password` from that same secret.
-- `DB_PASSWORD` in `.env` is a fallback for non-Compose/local direct runs.
+- `backend` reads `DB_PASSWORD_FILE=/run/secrets/db_password` in Compose.
+- `DB_PASSWORD` in `.env` is fallback for non-Compose direct runs.
 
-If `DB_PASSWORD` and `secrets/db_password.txt` differ when not using shared-secret mode, database authentication can fail.
+If `DB_PASSWORD` and `secrets/db_password.txt` are different when running locally outside shared-secret mode, DB authentication can fail.
 
 #### 2) Generate local secrets
 ```bash
@@ -29,23 +39,43 @@ bash scripts/generate-secrets.sh
 ```
 
 Use `bash scripts/generate-secrets.sh --force` to overwrite existing files in `secrets/`.
-If you set `DB_PASSWORD` manually for non-Compose runs, keep it aligned with `secrets/db_password.txt`.
 
-#### 3) Start the stack
+#### 3) Start the platform
 ```bash
 docker compose up -d --build
 ```
 
-### Verify services
-- Backend health: `http://localhost:8000/api/v1/health/`
+### Service URLs
+- Backend API: `http://localhost:8000`
+- Swagger UI: `http://localhost:8000/docs`
+- OpenAPI JSON: `http://localhost:8000/api/v1/openapi.json`
+- Health endpoint: `http://localhost:8000/api/v1/health`
 - pgAdmin: `http://localhost:5050`
-- Postgres port: `localhost:5432`
-- Redis port: `localhost:6379`
+- Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3001` (default login `admin/admin`)
+
+### Jobs API (current)
+- `GET /api/v1/jobs`
+- `GET /api/v1/jobs/{job_id}`
+- `POST /api/v1/jobs`
+- `PATCH /api/v1/jobs/{job_id}`
+- `DELETE /api/v1/jobs/{job_id}`
+
+### Observability
+- Prometheus scrapes backend metrics target at `backend:8000/metrics` every 15s.
+- Grafana auto-provisions Prometheus datasource and dashboard folder from `monitoring/grafana/`.
+- Backend log files are written to `backend/logs/` with retention and rotation.
 
 ### Useful commands
 ```bash
 # Restart all services
 docker compose restart
+
+# View service status
+docker compose ps
+
+# Follow backend logs
+docker compose logs -f backend
 
 # Stop and remove containers and network
 docker compose down
