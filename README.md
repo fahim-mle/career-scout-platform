@@ -26,6 +26,8 @@ Set these required values in `.env`:
 - `PGADMIN_DEFAULT_EMAIL`
 - `PGADMIN_DEFAULT_PASSWORD`
 - `GRAFANA_USER`
+- `LINKEDIN_EMAIL` (for scraper milestone)
+- `LINKEDIN_PASSWORD` (for scraper milestone)
 
 Password flow in this project:
 - `postgres` reads `secrets/db_password.txt` via Docker secret `db_password`.
@@ -61,6 +63,10 @@ docker compose up -d --build
 - `POST /api/v1/jobs`
 - `PATCH /api/v1/jobs/{job_id}`
 - `DELETE /api/v1/jobs/{job_id}`
+
+### Scraper Notes (Milestone 2)
+- Playwright base scraper and Celery worker/beat setup are in progress for LinkedIn automation.
+- For account safety, prefer a secondary LinkedIn account for automated scraping.
 
 ### Observability
 - Prometheus scrapes backend metrics target at `backend:8000/metrics` every 15s.
