@@ -72,6 +72,60 @@ services:
       retries: 3
       start_period: 30s
 
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: career-scout-celery-worker
+    restart: unless-stopped
+    command: ["python", "-m", "celery", "-A", "src.celery_app.celery_app", "worker", "--loglevel=INFO"]
+    environment:
+      ENV: local
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-career-scout}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_URL: redis://redis:6379/0
+    secrets:
+      - db_password
+    networks:
+      - app-network
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: career-scout-celery-beat
+    restart: unless-stopped
+    command: ["python", "-m", "celery", "-A", "src.celery_app.celery_app", "beat", "--loglevel=INFO"]
+    environment:
+      ENV: local
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-career-scout}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_URL: redis://redis:6379/0
+    secrets:
+      - db_password
+    networks:
+      - app-network
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   pgadmin:
     image: dpage/pgadmin4:9.12
     container_name: career-scout-pgadmin
