@@ -9,3 +9,4 @@ httpx
 redis
 celery
 prometheus-fastapi-instrumentator
+playwright
