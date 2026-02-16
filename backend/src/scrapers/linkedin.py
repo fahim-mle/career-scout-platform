@@ -238,8 +238,16 @@ class LinkedInScraper(BaseScraper):
                 details = await self.scrape_job_details(job_url=job_url)
                 if details:
                     job_data.update(details)
-            except LinkedInNonRetryableError:
-                raise
+            except LinkedInNonRetryableError as exc:
+                logger.bind(
+                    scraper=self.__class__.__name__,
+                    url=job_url,
+                    error=str(exc),
+                    collected_jobs=len(jobs),
+                ).warning(
+                    "LinkedIn detail enrichment stopped due to non-retryable error; returning collected jobs"
+                )
+                break
             except Exception as exc:
                 logger.bind(
                     scraper=self.__class__.__name__,

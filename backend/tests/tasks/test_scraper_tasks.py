@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -113,6 +115,72 @@ def test_scrape_linkedin_jobs_retries_on_transient_error(
     assert retry_payload["countdown"] == scraper_tasks.DEFAULT_RETRY_COUNTDOWN_SECONDS
     assert retry_payload["max_retries"] == scraper_tasks.MAX_SCRAPER_TASK_RETRIES
     assert isinstance(retry_payload["exc"], LinkedInTransientError)
+
+
+def test_scrape_linkedin_jobs_reraises_unexpected_error_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unexpected non-classified errors are re-raised without retry."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def raise_unexpected(**_kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("unexpected parse shape")
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_linkedin_scrape_and_persist",
+        raise_unexpected,
+    )
+
+    with pytest.raises(RuntimeError, match="unexpected parse shape"):
+        SCRAPE_TASK_RUN(
+            task,
+            query="python",
+            location="remote",
+            limit=5,
+        )
+
+    assert task.retry_calls == []
+
+
+def test_load_linkedin_search_profiles_invalid_priority_falls_back_to_index(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Invalid profile priority values fallback to profile index."""
+    config_path = tmp_path / "linkedin_profiles.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "id": "alpha",
+                        "query": "python",
+                        "location": "remote",
+                        "limit": 3,
+                        "priority": "invalid",
+                    },
+                    {
+                        "id": "beta",
+                        "query": "backend",
+                        "location": "remote",
+                        "limit": 4,
+                        "priority": 3,
+                    },
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr(scraper_tasks, "LINKEDIN_PROFILE_CONFIG_PATH", config_path)
+
+    profiles = scraper_tasks._load_linkedin_search_profiles()
+
+    assert len(profiles) == 2
+    assert profiles[0]["id"] == "alpha"
+    assert profiles[0]["priority"] == 1
+    assert profiles[1]["id"] == "beta"
+    assert profiles[1]["priority"] == 3
 
 
 def test_build_job_update_payload_only_sets_missing_fields() -> None:

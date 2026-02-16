@@ -388,13 +388,32 @@ def _load_linkedin_search_profiles() -> list[dict[str, Any]]:
 
         bounded_limit = min(limit, MAX_LINKEDIN_SCRAPE_LIMIT)
 
+        requested_priority = profile.get("priority", index)
+        try:
+            priority = int(requested_priority)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid profile priority; defaulting to profile order index",
+                index=index,
+                requested_priority=requested_priority,
+            )
+            priority = index
+
+        if priority <= 0:
+            logger.warning(
+                "Invalid non-positive profile priority; defaulting to profile order index",
+                index=index,
+                requested_priority=requested_priority,
+            )
+            priority = index
+
         validated_profiles.append(
             {
                 "id": str(profile.get("id", f"profile-{index}")),
                 "query": query,
                 "location": location,
                 "limit": bounded_limit,
-                "priority": int(profile.get("priority", index)),
+                "priority": priority,
             }
         )
 
