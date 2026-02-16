@@ -26,11 +26,14 @@ Set these required values in `.env`:
 - `PGADMIN_DEFAULT_EMAIL`
 - `PGADMIN_DEFAULT_PASSWORD`
 - `GRAFANA_USER`
+- `LINKEDIN_EMAIL` (for scraper milestone)
+- `LINKEDIN_PASSWORD_FILE` (for scraper milestone, recommended: `secrets/linkedin_password.txt`)
 
 Password flow in this project:
 - `postgres` reads `secrets/db_password.txt` via Docker secret `db_password`.
 - `backend` reads `DB_PASSWORD_FILE=/run/secrets/db_password` in Compose.
 - `DB_PASSWORD` in `.env` is fallback for non-Compose direct runs.
+- `backend`, `celery-worker`, and `celery-beat` read `LINKEDIN_PASSWORD_FILE=/run/secrets/linkedin_password` in Compose.
 
 If `DB_PASSWORD` and `secrets/db_password.txt` are different when running locally outside shared-secret mode, DB authentication can fail.
 
@@ -61,6 +64,12 @@ docker compose up -d --build
 - `POST /api/v1/jobs`
 - `PATCH /api/v1/jobs/{job_id}`
 - `DELETE /api/v1/jobs/{job_id}`
+
+### Scraper Notes (Milestone 2)
+- Playwright base scraper and Celery worker/beat setup are in progress for LinkedIn automation.
+- For account safety, prefer a secondary LinkedIn account for automated scraping.
+- Daily scrape now runs profile-based searches from `backend/src/scrapers/config/linkedin_search_profiles.json`.
+- Current profile set prioritizes Brisbane first, then broader Australia relocation-friendly searches.
 
 ### Observability
 - Prometheus scrapes backend metrics target at `backend:8000/metrics` every 15s.

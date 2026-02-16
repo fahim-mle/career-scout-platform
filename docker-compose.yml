@@ -54,8 +54,12 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD_FILE: /run/secrets/db_password
       REDIS_URL: redis://redis:6379/0
+      SCRAPER_ENABLED: ${SCRAPER_ENABLED:-false}
+      LINKEDIN_EMAIL: ${LINKEDIN_EMAIL:-}
+      LINKEDIN_PASSWORD_FILE: /run/secrets/linkedin_password
     secrets:
       - db_password
+      - linkedin_password
     ports:
       - "8000:8000"
     networks:
@@ -71,6 +75,71 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: career-scout-celery-worker
+    restart: unless-stopped
+    command: ["python", "-m", "celery", "-A", "src.celery_app.celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--pool=solo"]
+    environment:
+      ENV: local
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-career-scout}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_URL: redis://redis:6379/0
+      SCRAPER_METRICS_PORT: ${SCRAPER_METRICS_PORT:-9101}
+      SCRAPER_ENABLED: ${SCRAPER_ENABLED:-false}
+      LINKEDIN_EMAIL: ${LINKEDIN_EMAIL:-}
+      LINKEDIN_PASSWORD_FILE: /run/secrets/linkedin_password
+    secrets:
+      - db_password
+      - linkedin_password
+    networks:
+      - app-network
+    expose:
+      - "${SCRAPER_METRICS_PORT:-9101}"
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: career-scout-celery-beat
+    restart: unless-stopped
+    command: ["python", "-m", "celery", "-A", "src.celery_app.celery_app", "beat", "--loglevel=INFO", "--pidfile="]
+    environment:
+      ENV: local
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-career-scout}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD_FILE: /run/secrets/db_password
+      REDIS_URL: redis://redis:6379/0
+      SCRAPER_ENABLED: ${SCRAPER_ENABLED:-false}
+      LINKEDIN_EMAIL: ${LINKEDIN_EMAIL:-}
+      LINKEDIN_PASSWORD_FILE: /run/secrets/linkedin_password
+    secrets:
+      - db_password
+      - linkedin_password
+    networks:
+      - app-network
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   pgadmin:
     image: dpage/pgadmin4:9.12
@@ -166,3 +235,5 @@ secrets:
     file: ./secrets/db_password.txt
   grafana_password:
     file: ./secrets/grafana_password.txt
+  linkedin_password:
+    file: ./secrets/linkedin_password.txt
