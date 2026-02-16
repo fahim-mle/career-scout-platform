@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import os
+
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import worker_ready
+from loguru import logger
+from prometheus_client import start_http_server
 
 from src.core.config import settings
+
+_metrics_server_started = False
 
 celery_app = Celery(
     "career_scout",
@@ -30,5 +37,20 @@ celery_app.conf.update(
         }
     },
 )
+
+
+@worker_ready.connect
+def start_worker_metrics_server(**_: object) -> None:
+    """Start Prometheus metrics endpoint once per worker process lifecycle."""
+    global _metrics_server_started
+
+    if _metrics_server_started:
+        return
+
+    metrics_port = int(os.getenv("SCRAPER_METRICS_PORT", "9101"))
+    start_http_server(metrics_port)
+    _metrics_server_started = True
+    logger.info("Started Celery metrics server", port=metrics_port)
+
 
 __all__ = ["celery_app"]

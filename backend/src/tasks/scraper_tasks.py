@@ -6,6 +6,7 @@ import asyncio
 from contextlib import AbstractAsyncContextManager
 import json
 from pathlib import Path
+import time
 from typing import Any
 
 from celery import Task
@@ -15,6 +16,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import settings
 from src.core.exceptions import DuplicateJobError, RepositoryError
+from src.core.metrics import (
+    increment_jobs_duplicates,
+    increment_jobs_errors,
+    increment_jobs_scraped,
+    increment_jobs_updated,
+    increment_scraper_runs,
+    observe_scraper_duration,
+    set_jobs_in_database,
+)
 from src.celery_app import celery_app
 from src.db.session import get_session
 from src.repositories.job import JobRepository
@@ -35,6 +45,84 @@ LINKEDIN_PROFILE_CONFIG_PATH = (
     / "linkedin_search_profiles.json"
 )
 MAX_PROFILE_RUNS_PER_TASK = 25
+LINKEDIN_PLATFORM = "linkedin"
+
+
+def _record_scraper_result_metrics(
+    platform: str,
+    *,
+    scraped: int = 0,
+    duplicates: int = 0,
+    failed: int = 0,
+    updated: int = 0,
+    jobs_in_database: int | None = None,
+    task_id: str | None = None,
+) -> None:
+    """Record scraper result metrics with safe validation handling.
+
+    Args:
+        platform: Scraper platform label.
+        scraped: Number of scraped jobs.
+        duplicates: Number of duplicate jobs.
+        failed: Number of persistence failures.
+        updated: Number of enriched existing jobs.
+        jobs_in_database: Optional known jobs currently in DB for this run.
+        task_id: Optional Celery task id for structured logs.
+
+    Returns:
+        None.
+    """
+    try:
+        increment_jobs_scraped(platform=platform, count=max(scraped, 0))
+        increment_jobs_duplicates(platform=platform, count=max(duplicates, 0))
+        increment_jobs_errors(platform=platform, count=max(failed, 0))
+        increment_jobs_updated(platform=platform, count=max(updated, 0))
+
+        if jobs_in_database is not None:
+            set_jobs_in_database(platform=platform, total=max(jobs_in_database, 0))
+    except ValueError as exc:
+        logger.warning(
+            "Skipped scraper result metrics due to invalid values",
+            platform=platform,
+            scraped=scraped,
+            duplicates=duplicates,
+            failed=failed,
+            updated=updated,
+            jobs_in_database=jobs_in_database,
+            task_id=task_id,
+            error=str(exc),
+        )
+
+
+def _record_scraper_run_metrics(
+    platform: str,
+    status: str,
+    duration_seconds: float,
+    task_id: str | None,
+) -> None:
+    """Record scraper run status and duration metrics.
+
+    Args:
+        platform: Scraper platform label.
+        status: Run status label (success/failure/skipped).
+        duration_seconds: Runtime in seconds.
+        task_id: Optional Celery task id for structured logs.
+
+    Returns:
+        None.
+    """
+    try:
+        increment_scraper_runs(platform=platform, status=status)
+        observe_scraper_duration(platform=platform, duration_seconds=duration_seconds)
+    except ValueError as exc:
+        logger.warning(
+            "Skipped scraper run metrics due to invalid values",
+            platform=platform,
+            status=status,
+            duration_seconds=duration_seconds,
+            task_id=task_id,
+            error=str(exc),
+        )
 
 
 def _build_job_update_payload(
@@ -360,42 +448,46 @@ def scrape_linkedin_profile_set(self: DatabaseTask) -> dict[str, Any]:
     Returns:
         Aggregated scrape metrics for all processed profiles.
     """
-    if not settings.SCRAPER_ENABLED:
-        logger.warning(
-            "LinkedIn profile set task skipped because scraper is disabled",
-            task_id=self.request.id,
-        )
-        return {
-            "status": "skipped",
-            "platform": "linkedin",
-            "reason": "SCRAPER_ENABLED is false",
-            "profiles_processed": 0,
-        }
-
-    profiles = _load_linkedin_search_profiles()
-    if not profiles:
-        logger.warning(
-            "No active LinkedIn profiles found in configuration",
-            task_id=self.request.id,
-            config_path=str(LINKEDIN_PROFILE_CONFIG_PATH),
-        )
-        return {
-            "status": "skipped",
-            "platform": "linkedin",
-            "reason": "No active profiles configured",
-            "profiles_processed": 0,
-        }
-
-    totals = {
-        "scraped": 0,
-        "created": 0,
-        "updated": 0,
-        "duplicates": 0,
-        "failed": 0,
-    }
-    per_profile: list[dict[str, Any]] = []
-
+    started_at = time.perf_counter()
+    run_status = "failure"
     try:
+        if not settings.SCRAPER_ENABLED:
+            run_status = "skipped"
+            logger.warning(
+                "LinkedIn profile set task skipped because scraper is disabled",
+                task_id=self.request.id,
+            )
+            return {
+                "status": "skipped",
+                "platform": LINKEDIN_PLATFORM,
+                "reason": "SCRAPER_ENABLED is false",
+                "profiles_processed": 0,
+            }
+
+        profiles = _load_linkedin_search_profiles()
+        if not profiles:
+            run_status = "skipped"
+            logger.warning(
+                "No active LinkedIn profiles found in configuration",
+                task_id=self.request.id,
+                config_path=str(LINKEDIN_PROFILE_CONFIG_PATH),
+            )
+            return {
+                "status": "skipped",
+                "platform": LINKEDIN_PLATFORM,
+                "reason": "No active profiles configured",
+                "profiles_processed": 0,
+            }
+
+        totals = {
+            "scraped": 0,
+            "created": 0,
+            "updated": 0,
+            "duplicates": 0,
+            "failed": 0,
+        }
+        per_profile: list[dict[str, Any]] = []
+
         for profile in profiles:
             result = asyncio.run(
                 _run_linkedin_scrape_and_persist(
@@ -420,9 +512,22 @@ def scrape_linkedin_profile_set(self: DatabaseTask) -> dict[str, Any]:
             totals["duplicates"] += int(result.get("duplicates", 0))
             totals["failed"] += int(result.get("failed", 0))
 
+        _record_scraper_result_metrics(
+            platform=LINKEDIN_PLATFORM,
+            scraped=totals["scraped"],
+            duplicates=totals["duplicates"],
+            failed=totals["failed"],
+            updated=totals["updated"],
+            jobs_in_database=(
+                totals["created"] + totals["duplicates"] + totals["updated"]
+            ),
+            task_id=self.request.id,
+        )
+
+        run_status = "success"
         return {
             "status": "success",
-            "platform": "linkedin",
+            "platform": LINKEDIN_PLATFORM,
             "profiles_processed": len(per_profile),
             "totals": totals,
             "profiles": per_profile,
@@ -455,6 +560,13 @@ def scrape_linkedin_profile_set(self: DatabaseTask) -> dict[str, Any]:
             exc_info=True,
         )
         raise
+    finally:
+        _record_scraper_run_metrics(
+            platform=LINKEDIN_PLATFORM,
+            status=run_status,
+            duration_seconds=time.perf_counter() - started_at,
+            task_id=self.request.id,
+        )
 
 
 @celery_app.task(
@@ -482,8 +594,11 @@ def scrape_linkedin_jobs(
         ValueError: If the limit is not positive.
         Exception: Re-raises unexpected errors and transient retry exceptions.
     """
+    started_at = time.perf_counter()
+    run_status = "failure"
     try:
         if not settings.SCRAPER_ENABLED:
+            run_status = "skipped"
             logger.warning(
                 "LinkedIn scrape task skipped because scraper is disabled",
                 query=query,
@@ -492,7 +607,7 @@ def scrape_linkedin_jobs(
             )
             return {
                 "status": "skipped",
-                "platform": "linkedin",
+                "platform": LINKEDIN_PLATFORM,
                 "query": query,
                 "location": location,
                 "reason": "SCRAPER_ENABLED is false",
@@ -518,6 +633,21 @@ def scrape_linkedin_jobs(
                 task_id=self.request.id,
             )
         )
+
+        _record_scraper_result_metrics(
+            platform=LINKEDIN_PLATFORM,
+            scraped=int(result.get("scraped", 0)),
+            duplicates=int(result.get("duplicates", 0)),
+            failed=int(result.get("failed", 0)),
+            updated=int(result.get("updated", 0)),
+            jobs_in_database=(
+                int(result.get("created", 0))
+                + int(result.get("duplicates", 0))
+                + int(result.get("updated", 0))
+            ),
+            task_id=self.request.id,
+        )
+        run_status = "success"
         return result
     except Exception as exc:
         if _is_non_retryable_error(exc):
@@ -556,3 +686,10 @@ def scrape_linkedin_jobs(
             exc_info=True,
         )
         raise
+    finally:
+        _record_scraper_run_metrics(
+            platform=LINKEDIN_PLATFORM,
+            status=run_status,
+            duration_seconds=time.perf_counter() - started_at,
+            task_id=self.request.id,
+        )

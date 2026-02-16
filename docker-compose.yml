@@ -82,7 +82,7 @@ services:
       dockerfile: Dockerfile
     container_name: career-scout-celery-worker
     restart: unless-stopped
-    command: ["python", "-m", "celery", "-A", "src.celery_app.celery_app", "worker", "--loglevel=INFO", "--concurrency=1"]
+    command: ["python", "-m", "celery", "-A", "src.celery_app.celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "--pool=solo"]
     environment:
       ENV: local
       DB_HOST: postgres
@@ -91,6 +91,7 @@ services:
       DB_USER: ${DB_USER:-postgres}
       DB_PASSWORD_FILE: /run/secrets/db_password
       REDIS_URL: redis://redis:6379/0
+      SCRAPER_METRICS_PORT: ${SCRAPER_METRICS_PORT:-9101}
       SCRAPER_ENABLED: ${SCRAPER_ENABLED:-false}
       LINKEDIN_EMAIL: ${LINKEDIN_EMAIL:-}
       LINKEDIN_PASSWORD_FILE: /run/secrets/linkedin_password
@@ -99,6 +100,8 @@ services:
       - linkedin_password
     networks:
       - app-network
+    expose:
+      - "${SCRAPER_METRICS_PORT:-9101}"
     healthcheck:
       disable: true
     depends_on:
