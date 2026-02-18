@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from src.ai.llm_client import BaseLLMClient, get_llm_client
+from src.ai.llm_client import BaseLLMClient, OpenAIClient, get_llm_client
 from src.ai.prompts import job_scoring_prompt
 
 
@@ -101,8 +101,15 @@ async def run_tests() -> int:
         Exit status code (0 for success, non-zero for failure).
     """
     logger.info("Initializing LLM client smoke tests")
+    client: BaseLLMClient | None = None
     try:
         client = get_llm_client()
+        if isinstance(client, OpenAIClient):
+            logger.error(
+                "Configured LLM provider resolved to OpenAI, but OpenAIClient is not implemented"
+            )
+            return 2
+
         await test_basic_generation(client)
         await test_json_parsing(client)
         await test_job_scoring_prompt_flow(client)
@@ -112,6 +119,13 @@ async def run_tests() -> int:
         logger.error("LLM client smoke tests failed: {}", exc)
         logger.exception("Detailed test failure traceback")
         return 1
+    finally:
+        if client is not None:
+            close_client = getattr(client, "aclose", None)
+            if callable(close_client):
+                close_result = close_client()
+                if asyncio.iscoroutine(close_result):
+                    await close_result
 
 
 def main() -> int:

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 CONTAINER_NAME="career-scout-ollama"
-MODEL="${1:-llama3.2:3b}"
+MODEL="${1:-${OLLAMA_MODEL:-llama3.2:3b}}"
 
 echo "[ollama] Pulling model: ${MODEL}"
 echo "[ollama] Using container: ${CONTAINER_NAME}"

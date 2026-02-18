@@ -16,8 +16,8 @@ def job_scoring_prompt(job_data: dict[str, Any], profile_data: dict[str, Any]) -
     Returns:
         Prompt asking the model for JSON-only job relevance scoring.
     """
-    serialized_job = json.dumps(job_data, ensure_ascii=True, sort_keys=True)
-    serialized_profile = json.dumps(profile_data, ensure_ascii=True, sort_keys=True)
+    serialized_job = json.dumps(job_data, ensure_ascii=False, sort_keys=True)
+    serialized_profile = json.dumps(profile_data, ensure_ascii=False, sort_keys=True)
 
     return (
         "You are an ATS relevance scoring engine.\n"
@@ -25,10 +25,11 @@ def job_scoring_prompt(job_data: dict[str, Any], profile_data: dict[str, Any]) -
         "No markdown, no code block fences, no commentary, and no surrounding text.\n"
         "\n"
         "Scoring rubric (integer 0-100):\n"
-        "- 90-100: Strong skills and experience alignment, location/role fit\n"
-        "- 70-89: Good alignment with minor gaps\n"
-        "- 50-69: Partial alignment with notable gaps\n"
-        "- 0-49: Weak alignment or major mismatch\n"
+        '- 90-100 => category "Most Relevant": Strong skills and experience alignment, location/role fit\n'
+        '- 70-89 => category "Relevant": Good alignment with minor gaps\n'
+        '- 50-69 => category "Somewhat Relevant": Partial alignment with notable gaps\n'
+        '- 0-49 => category "Not Relevant": Weak alignment or major mismatch\n'
+        "Use the category that matches the selected score range.\n"
         "\n"
         "Response schema:\n"
         "{\n"

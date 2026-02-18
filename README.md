@@ -56,6 +56,16 @@ Use `bash scripts/generate-secrets.sh --force` to overwrite existing files in `s
 docker compose up -d --build
 ```
 
+### LLM / Ollama quick test
+
+Make sure the Ollama service is running first (`docker compose up -d ollama`).
+
+```bash
+bash backend/scripts/pull-ollama-model.sh
+python3 backend/scripts/test_ollama.py
+python3 backend/scripts/test_llm_client.py
+```
+
 ### Service URLs
 - Backend API: `http://localhost:8000`
 - Swagger UI: `http://localhost:8000/docs`

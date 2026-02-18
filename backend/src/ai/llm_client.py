@@ -76,7 +76,7 @@ class BaseLLMClient(ABC):
                     max_retries=max_retries,
                 ).info("LLM JSON response parsed successfully")
                 return parsed_json
-            except (ValueError, json.JSONDecodeError) as exc:
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 logger.bind(
                     attempt=attempt,
                     max_retries=max_retries,
@@ -101,8 +101,6 @@ class BaseLLMClient(ABC):
                 raise RuntimeError(
                     f"LLM JSON generation failed after {max_retries} attempts"
                 ) from exc
-
-        raise RuntimeError("JSON generation exhausted retries unexpectedly")
 
     @staticmethod
     def _extract_json_object(response_text: str) -> dict[str, Any]:
@@ -140,25 +138,71 @@ class OllamaClient(BaseLLMClient):
         self,
         base_url: str | None = None,
         model: str | None = None,
-        timeout: float = 30.0,
+        timeout: float | httpx.Timeout | None = None,
     ) -> None:
         """Initialize Ollama client configuration.
 
         Args:
             base_url: Ollama base URL.
             model: Model name to run.
-            timeout: Request timeout in seconds.
+            timeout: Request timeout config. If omitted, uses conservative
+                defaults with longer read timeout for model generation.
         """
         self.base_url = (base_url or settings.OLLAMA_BASE_URL).rstrip("/")
         self.model = model or settings.OLLAMA_MODEL
-        self.timeout = timeout
+        if timeout is None:
+            self.timeout = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
+        elif isinstance(timeout, httpx.Timeout):
+            self.timeout = timeout
+        else:
+            self.timeout = httpx.Timeout(timeout)
+
+        self._client = httpx.AsyncClient(timeout=self.timeout)
 
         logger.bind(
             provider="ollama",
             base_url=self.base_url,
             model=self.model,
-            timeout_seconds=self.timeout,
+            timeout=str(self.timeout),
         ).info("Initialized Ollama client")
+
+    async def aclose(self) -> None:
+        """Close underlying HTTP resources.
+
+        Returns:
+            None.
+        """
+        if not self._client.is_closed:
+            await self._client.aclose()
+            logger.bind(provider="ollama", model=self.model).info(
+                "Closed Ollama HTTP client"
+            )
+
+    async def __aenter__(self) -> OllamaClient:
+        """Enter async context manager for resource reuse.
+
+        Returns:
+            Current Ollama client instance.
+        """
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        """Exit async context manager and close resources.
+
+        Args:
+            exc_type: Exception type raised in context, if any.
+            exc_val: Exception instance raised in context, if any.
+            exc_tb: Traceback object for context exception, if any.
+
+        Returns:
+            None.
+        """
+        await self.aclose()
 
     async def generate(
         self,
@@ -198,44 +242,43 @@ class OllamaClient(BaseLLMClient):
             max_tokens=max_tokens,
         ).info("Sending generation request to Ollama")
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            try:
-                response = await client.post(
-                    url=f"{self.base_url}/api/generate",
-                    json=payload,
+        try:
+            response = await self._client.post(
+                url=f"{self.base_url}/api/generate",
+                json=payload,
+            )
+            response.raise_for_status()
+            response_data = response.json()
+
+            generated_text = response_data.get("response")
+            if not isinstance(generated_text, str):
+                raise TypeError(
+                    "Ollama response did not include string field 'response'"
                 )
-                response.raise_for_status()
-                response_data = response.json()
 
-                generated_text = response_data.get("response")
-                if not isinstance(generated_text, str):
-                    raise ValueError(
-                        "Ollama response did not include string field 'response'"
-                    )
-
-                logger.bind(
-                    provider="ollama",
-                    model=self.model,
-                    response_length=len(generated_text),
-                    eval_count=response_data.get("eval_count"),
-                    eval_duration_ns=response_data.get("eval_duration"),
-                ).info("Ollama generation succeeded")
-                return generated_text
-            except httpx.HTTPError as exc:
-                logger.bind(
-                    provider="ollama",
-                    endpoint=f"{self.base_url}/api/generate",
-                    model=self.model,
-                    error=str(exc),
-                ).error("Ollama HTTP request failed", exc_info=True)
-                raise
-            except ValueError as exc:
-                logger.bind(
-                    provider="ollama",
-                    model=self.model,
-                    error=str(exc),
-                ).error("Invalid Ollama response payload", exc_info=True)
-                raise
+            logger.bind(
+                provider="ollama",
+                model=self.model,
+                response_length=len(generated_text),
+                eval_count=response_data.get("eval_count"),
+                eval_duration_ns=response_data.get("eval_duration"),
+            ).info("Ollama generation succeeded")
+            return generated_text
+        except httpx.HTTPError as exc:
+            logger.bind(
+                provider="ollama",
+                endpoint=f"{self.base_url}/api/generate",
+                model=self.model,
+                error=str(exc),
+            ).error("Ollama HTTP request failed", exc_info=True)
+            raise
+        except TypeError as exc:
+            logger.bind(
+                provider="ollama",
+                model=self.model,
+                error=str(exc),
+            ).error("Invalid Ollama response payload", exc_info=True)
+            raise
 
 
 class OpenAIClient(BaseLLMClient):
