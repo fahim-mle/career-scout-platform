@@ -8,7 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.health import HealthService
 from src.db.session import get_session_dependency
 from src.repositories.job import JobRepository
+from src.repositories.profile import ProfileRepository
 from src.services.job_service import JobService
+from src.services.profile_service import ProfileService
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
@@ -57,6 +59,18 @@ def get_job_service(db: AsyncSession = Depends(get_db_session)) -> JobService:
     return JobService(JobRepository(db))
 
 
+def get_profile_service(db: AsyncSession = Depends(get_db_session)) -> ProfileService:
+    """Provide a profile service dependency.
+
+    Args:
+        db: Active async DB session provided by dependency injection.
+
+    Returns:
+        ProfileService configured with a ProfileRepository bound to the session.
+    """
+    return ProfileService(ProfileRepository(db))
+
+
 DBSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 __all__ = [
@@ -64,5 +78,6 @@ __all__ = [
     "get_db_session",
     "get_health_service",
     "get_job_service",
+    "get_profile_service",
     "get_request_id",
 ]

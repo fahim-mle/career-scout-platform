@@ -15,6 +15,7 @@ from src.db.base import Base
 
 # Importing models ensures Alembic autogenerate can discover tables.
 from src.models import job
+from src.models import profile
 
 config = context.config
 
