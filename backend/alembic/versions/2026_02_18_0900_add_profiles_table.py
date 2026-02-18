@@ -68,10 +68,14 @@ def upgrade() -> None:
         unique=False,
         postgresql_using="gin",
     )
+    op.execute(
+        sa.text("CREATE UNIQUE INDEX uq_profiles_singleton ON profiles ((TRUE))")
+    )
 
 
 def downgrade() -> None:
     """Drop profiles table and related indexes."""
+    op.drop_index("uq_profiles_singleton", table_name="profiles")
     op.drop_index("ix_profiles_skills_gin", table_name="profiles")
     op.drop_index("ix_profiles_location", table_name="profiles")
     op.drop_table("profiles")

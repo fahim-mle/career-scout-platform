@@ -92,7 +92,7 @@ async def db_session(test_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, N
     """
     Provide a per-test database session and ensure test-specific cleanup.
 
-    Yields an AsyncSession for use in a test. After the test completes, any pending transactions are rolled back, the `jobs` table is truncated with identity restart and cascade, and the changes are committed.
+    Yields an AsyncSession for use in a test. After the test completes, any pending transactions are rolled back, both the `profiles` and `jobs` tables are truncated with identity restart and cascade, and the changes are committed.
 
     Returns:
         session (AsyncSession): Database session scoped to the current test.

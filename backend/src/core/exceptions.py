@@ -25,9 +25,14 @@ class BusinessLogicError(CareerScoutError):
     """Raised when a service layer business rule fails."""
 
 
+class ConflictError(BusinessLogicError):
+    """Raised when a business operation conflicts with current state."""
+
+
 __all__ = [
     "BusinessLogicError",
     "CareerScoutError",
+    "ConflictError",
     "DuplicateError",
     "DuplicateJobError",
     "NotFoundError",

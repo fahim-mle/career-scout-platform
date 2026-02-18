@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 from loguru import logger
+from sqlalchemy.exc import IntegrityError
 
-from src.core.exceptions import BusinessLogicError, NotFoundError, RepositoryError
+from src.core.exceptions import (
+    BusinessLogicError,
+    ConflictError,
+    NotFoundError,
+    RepositoryError,
+)
 from src.repositories.profile import ProfileRepository
 from src.schemas.profile import ProfileCreate, ProfileResponse, ProfileUpdate
 
@@ -56,7 +62,8 @@ class ProfileService:
             Serialized created profile response.
 
         Raises:
-            BusinessLogicError: If profile exists, validation fails, or repository fails.
+            ConflictError: If profile already exists.
+            BusinessLogicError: If validation fails or repository fails.
         """
         log = logger.bind(service=self.__class__.__name__, operation="create_profile")
         log.info("Creating profile")
@@ -68,14 +75,24 @@ class ProfileService:
             existing = await self.repo.get_first()
             if existing is not None:
                 log.bind(profile_id=existing.id).warning("Profile already exists")
-                raise BusinessLogicError(
+                raise ConflictError(
                     "Profile already exists. Only one profile is allowed."
                 )
 
             profile = await self.repo.create(payload.model_dump(mode="python"))
-        except BusinessLogicError:
+        except ConflictError:
             raise
-        except (RepositoryError, ValueError) as exc:
+        except RepositoryError as exc:
+            if self._is_singleton_conflict_error(exc):
+                log.bind(error=str(exc)).warning(
+                    "Profile create conflict from concurrent insert"
+                )
+                raise ConflictError(
+                    "Profile already exists. Only one profile is allowed."
+                ) from exc
+            log.bind(error=str(exc)).error("Failed to create profile")
+            raise BusinessLogicError(f"Failed to create profile: {exc}") from exc
+        except ValueError as exc:
             log.bind(error=str(exc)).error("Failed to create profile")
             raise BusinessLogicError(f"Failed to create profile: {exc}") from exc
 
@@ -202,6 +219,31 @@ class ProfileService:
             raise BusinessLogicError("skills must contain at least one skill.")
         if any(not isinstance(skill, str) or not skill.strip() for skill in skills):
             raise BusinessLogicError("skills must contain only non-empty strings.")
+
+    def _is_singleton_conflict_error(self, error: RepositoryError) -> bool:
+        """Determine whether repository error is singleton unique conflict.
+
+        Args:
+            error: Repository exception raised during create.
+
+        Returns:
+            ``True`` when error originates from unique/singleton constraint violation.
+        """
+        cause = error.__cause__
+        if not isinstance(cause, IntegrityError):
+            return False
+
+        original = getattr(cause, "orig", None)
+        constraint_name = getattr(
+            getattr(original, "diag", None), "constraint_name", ""
+        )
+        pgcode = getattr(original, "pgcode", "")
+
+        if constraint_name == "uq_profiles_singleton":
+            return True
+
+        detail = str(cause).lower()
+        return pgcode == "23505" and "uq_profiles_singleton" in detail
 
 
 __all__ = ["ProfileService"]

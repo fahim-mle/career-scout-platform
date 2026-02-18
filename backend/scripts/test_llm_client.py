@@ -88,7 +88,17 @@ async def test_job_scoring_prompt_flow(client: BaseLLMClient) -> None:
         raise AssertionError("Job scoring payload missing required fields")
 
     score_value = score_payload.get("score")
-    if not isinstance(score_value, int) or score_value < 0 or score_value > 100:
+    if isinstance(score_value, bool):
+        raise AssertionError("Job scoring payload contains invalid score")
+
+    if isinstance(score_value, int):
+        numeric_score = score_value
+    elif isinstance(score_value, float) and score_value.is_integer():
+        numeric_score = int(score_value)
+    else:
+        raise AssertionError("Job scoring payload contains invalid score")
+
+    if numeric_score < 0 or numeric_score > 100:
         raise AssertionError("Job scoring payload contains invalid score")
 
     logger.bind(score_payload=score_payload).info("Job scoring prompt flow test passed")

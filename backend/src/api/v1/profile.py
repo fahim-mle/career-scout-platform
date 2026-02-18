@@ -8,11 +8,32 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from loguru import logger
 
 from src.api.deps import get_profile_service
-from src.core.exceptions import BusinessLogicError, NotFoundError
+from src.core.exceptions import (
+    BusinessLogicError,
+    ConflictError,
+    NotFoundError,
+    RepositoryError,
+)
 from src.schemas.profile import ProfileCreate, ProfileResponse, ProfileUpdate
 from src.services.profile_service import ProfileService
 
 router = APIRouter()
+
+
+def _map_business_logic_error_status(error: BusinessLogicError) -> int:
+    """Resolve HTTP status code for business errors.
+
+    Args:
+        error: Business layer exception raised by service.
+
+    Returns:
+        HTTP status code (500 for repository-caused failures, otherwise 400).
+    """
+    return (
+        status.HTTP_500_INTERNAL_SERVER_ERROR
+        if isinstance(error.__cause__, RepositoryError)
+        else status.HTTP_400_BAD_REQUEST
+    )
 
 
 @router.get("", response_model=ProfileResponse)
@@ -39,7 +60,7 @@ async def get_profile(
         ) from exc
     except BusinessLogicError as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=_map_business_logic_error_status(exc),
             detail=str(exc),
         ) from exc
 
@@ -63,14 +84,16 @@ async def create_profile(
     """
     try:
         return await service.create_profile(payload)
+    except ConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     except BusinessLogicError as exc:
-        detail = str(exc)
-        status_code = (
-            status.HTTP_409_CONFLICT
-            if "already exists" in detail.lower()
-            else status.HTTP_400_BAD_REQUEST
-        )
-        raise HTTPException(status_code=status_code, detail=detail) from exc
+        raise HTTPException(
+            status_code=_map_business_logic_error_status(exc),
+            detail=str(exc),
+        ) from exc
 
 
 @router.patch("", response_model=ProfileResponse)
@@ -99,7 +122,7 @@ async def update_profile(
         ) from exc
     except BusinessLogicError as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=_map_business_logic_error_status(exc),
             detail=str(exc),
         ) from exc
 
@@ -130,7 +153,7 @@ async def delete_profile(
     except BusinessLogicError as exc:
         logger.error("Failed to delete profile", error=str(exc))
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=_map_business_logic_error_status(exc),
             detail=str(exc),
         ) from exc
 

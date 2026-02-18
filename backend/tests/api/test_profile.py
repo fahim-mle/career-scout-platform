@@ -8,7 +8,8 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from src.api.deps import get_db_session
+from src.api.deps import get_db_session, get_profile_service
+from src.core.exceptions import BusinessLogicError, ConflictError, RepositoryError
 from src.main import app
 
 
@@ -77,14 +78,31 @@ class TestProfileAPI:
         assert "already exists" in second.json()["detail"].lower()
 
     @pytest.mark.asyncio
+    async def test_create_profile_conflict_error_maps_to_409(
+        self, client: AsyncClient
+    ) -> None:
+        class BrokenCreateProfileService:
+            async def create_profile(self, payload: dict[str, Any]) -> dict[str, Any]:
+                raise ConflictError("profile singleton conflict")
+
+        app.dependency_overrides[get_profile_service] = (
+            lambda: BrokenCreateProfileService()
+        )
+        response = await client.post("/api/v1/profile", json=build_profile_payload())
+        app.dependency_overrides.pop(get_profile_service, None)
+
+        assert response.status_code == 409
+        assert "singleton conflict" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
     async def test_get_profile_success(self, client: AsyncClient) -> None:
         create_response = await client.post(
             "/api/v1/profile", json=build_profile_payload()
         )
+        assert create_response.status_code == 201
 
         response = await client.get("/api/v1/profile")
 
-        assert create_response.status_code == 201
         assert response.status_code == 200
         assert response.json()["name"] == "Jane Candidate"
 
@@ -94,6 +112,25 @@ class TestProfileAPI:
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_get_profile_repository_cause_maps_to_500(
+        self, client: AsyncClient
+    ) -> None:
+        class BrokenGetProfileService:
+            async def get_profile(self) -> dict[str, Any]:
+                raise BusinessLogicError("service failure") from RepositoryError(
+                    "database unavailable"
+                )
+
+        app.dependency_overrides[get_profile_service] = (
+            lambda: BrokenGetProfileService()
+        )
+        response = await client.get("/api/v1/profile")
+        app.dependency_overrides.pop(get_profile_service, None)
+
+        assert response.status_code == 500
+        assert "service failure" in response.json()["detail"].lower()
 
     @pytest.mark.asyncio
     async def test_update_profile_success(self, client: AsyncClient) -> None:
