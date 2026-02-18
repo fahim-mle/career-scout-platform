@@ -40,6 +40,23 @@ services:
       retries: 5
       start_period: 10s
 
+  ollama:
+    image: ollama/ollama:0.5.7
+    container_name: career-scout-ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
   backend:
     build:
       context: ./backend
@@ -224,6 +241,8 @@ volumes:
   prometheus_data:
     driver: local
   grafana_data:
+    driver: local
+  ollama_data:
     driver: local
 
 networks:

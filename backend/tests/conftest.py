@@ -24,7 +24,7 @@ from tests.factories import job_factory
 def _default_test_database_url() -> str:
     """
     Constructs a default PostgreSQL asyncpg connection URL for tests using environment variables with a secrets-file fallback.
-    
+
     Reads configuration from environment variables with these defaults:
     - host: TEST_DB_HOST or "localhost"
     - port: TEST_DB_PORT or "5432"
@@ -34,9 +34,9 @@ def _default_test_database_url() -> str:
     1. TEST_DB_PASSWORD
     2. DB_PASSWORD
     3. secrets/db_password.txt located two levels above this file (if present)
-    
+
     The returned URL includes URL-encoded credentials.
-    
+
     Returns:
         str: A connection URL in the form "postgresql+asyncpg://<user>:<password>@<host>:<port>/<name>".
     """
@@ -66,7 +66,7 @@ TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL", _default_test_database_url())
 async def test_engine() -> AsyncGenerator[AsyncEngine, None]:
     """
     Provide an AsyncEngine connected to the test database with the schema created before tests and dropped after tests.
-    
+
     Yields:
         AsyncEngine: Engine instance bound to the test database with Base.metadata created for the test session.
     """
@@ -91,9 +91,9 @@ async def test_engine() -> AsyncGenerator[AsyncEngine, None]:
 async def db_session(test_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
     """
     Provide a per-test database session and ensure test-specific cleanup.
-    
-    Yields an AsyncSession for use in a test. After the test completes, any pending transactions are rolled back, the `jobs` table is truncated with identity restart and cascade, and the changes are committed.
-    
+
+    Yields an AsyncSession for use in a test. After the test completes, any pending transactions are rolled back, both the `profiles` and `jobs` tables are truncated with identity restart and cascade, and the changes are committed.
+
     Returns:
         session (AsyncSession): Database session scoped to the current test.
     """
@@ -108,5 +108,7 @@ async def db_session(test_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, N
             yield session
         finally:
             await session.rollback()
-            await session.execute(text("TRUNCATE TABLE jobs RESTART IDENTITY CASCADE"))
+            await session.execute(
+                text("TRUNCATE TABLE profiles, jobs RESTART IDENTITY CASCADE")
+            )
             await session.commit()

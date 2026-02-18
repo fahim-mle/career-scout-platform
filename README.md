@@ -10,6 +10,12 @@ Career Scout is a job-tracking backend platform for collecting and managing job 
 - Ships with PostgreSQL, Redis, pgAdmin, Prometheus, and Grafana in Docker Compose.
 - Includes production-style Loguru logging (colored console, rotated file logs, separate error logs).
 
+### Current progress snapshot
+- Milestone 2 scraper flow is functional for LinkedIn list scraping plus detail-page description enrichment.
+- Celery supports both single search runs and profile-set runs from JSON config.
+- Default search profiles are Australia-first, with Brisbane profiles at highest priority.
+- Skills and salary extraction are intentionally deferred to a later milestone.
+
 ### Prerequisites
 - Docker
 - Docker Compose (`docker compose`)
@@ -26,6 +32,7 @@ Set these required values in `.env`:
 - `PGADMIN_DEFAULT_EMAIL`
 - `PGADMIN_DEFAULT_PASSWORD`
 - `GRAFANA_USER`
+- `SCRAPER_ENABLED` (`true` to allow scraper tasks to run)
 - `LINKEDIN_EMAIL` (for scraper milestone)
 - `LINKEDIN_PASSWORD_FILE` (for scraper milestone, recommended: `secrets/linkedin_password.txt`)
 
@@ -49,6 +56,16 @@ Use `bash scripts/generate-secrets.sh --force` to overwrite existing files in `s
 docker compose up -d --build
 ```
 
+### LLM / Ollama quick test
+
+Make sure the Ollama service is running first (`docker compose up -d ollama`).
+
+```bash
+bash backend/scripts/pull-ollama-model.sh
+python3 backend/scripts/test_ollama.py
+python3 backend/scripts/test_llm_client.py
+```
+
 ### Service URLs
 - Backend API: `http://localhost:8000`
 - Swagger UI: `http://localhost:8000/docs`
@@ -65,11 +82,48 @@ docker compose up -d --build
 - `PATCH /api/v1/jobs/{job_id}`
 - `DELETE /api/v1/jobs/{job_id}`
 
-### Scraper Notes (Milestone 2)
-- Playwright base scraper and Celery worker/beat setup are in progress for LinkedIn automation.
-- For account safety, prefer a secondary LinkedIn account for automated scraping.
-- Daily scrape now runs profile-based searches from `backend/src/scrapers/config/linkedin_search_profiles.json`.
-- Current profile set prioritizes Brisbane first, then broader Australia relocation-friendly searches.
+### Scraper Status (Milestone 2)
+- Implemented: Base Playwright scraper lifecycle and LinkedIn login/search flow.
+- Implemented: LinkedIn list scraping + detail-page enrichment for `description_full`, `description_short`, and `job_type`.
+- Implemented: Celery tasks for both single query runs and profile-set runs.
+- Implemented: Australia-first profile configuration with Brisbane-priority profiles.
+- Current limit: `skills` and `salary_range` extraction are deferred for a later milestone.
+
+### Scraper Configuration
+- Required env vars: `SCRAPER_ENABLED`, `LINKEDIN_EMAIL`, `LINKEDIN_PASSWORD_FILE`.
+- Secrets flow: store the LinkedIn password in `secrets/linkedin_password.txt`; Compose mounts it to `/run/secrets/linkedin_password`, and app settings read it through `LINKEDIN_PASSWORD_FILE`.
+- Profile config path is currently fixed in code to `backend/src/scrapers/config/linkedin_search_profiles.json`; edit this file to add/disable/reprioritize profiles (`active`, `priority`, `query`, `location`, `limit`).
+
+### How to run scraper
+```bash
+# 1) Bring up required services
+docker compose up -d postgres redis backend celery-worker celery-beat
+
+# 2) Trigger a single LinkedIn scrape task (returns a task id)
+docker compose exec celery-worker python -m celery -A src.celery_app.celery_app call src.tasks.scraper_tasks.scrape_linkedin_jobs --kwargs='{"query":"Junior Software Engineer Python Node React","location":"Brisbane, Queensland, Australia","limit":5}'
+
+# 3) Trigger the profile-set task (reads linkedin_search_profiles.json)
+docker compose exec celery-worker python -m celery -A src.celery_app.celery_app call src.tasks.scraper_tasks.scrape_linkedin_profile_set
+
+# 4) Fetch task result (replace with returned id)
+docker compose exec celery-worker python -m celery -A src.celery_app.celery_app result <TASK_ID>
+```
+
+### What to expect
+- Task result payload includes counters such as `scraped`, `created`, `updated`, `duplicates`, and `failed` (plus status/platform/query/location context).
+- Scraped jobs can be verified via `GET /api/v1/jobs?platform=linkedin`.
+- For enriched jobs, `description_full` should contain normalized detail text and `description_short` should contain a truncated summary; some jobs may still have null descriptions if LinkedIn detail markup is unavailable.
+
+### Monitoring
+- Scraper metrics are exposed by `celery-worker:9101/metrics` and scraped by Prometheus (`job_name: celery-worker`).
+- Grafana dashboard: `Scraper Monitoring` at `http://localhost:3001/d/career-scout-scraper-metrics/scraper-monitoring`.
+- Key panels include success rate, jobs scraped/created, failures, run status, run duration (p95/avg), duplicates rate, and jobs-in-db by platform.
+- In low-frequency runs, short time windows can look sparse; widen the window (for example, last 24h) before concluding data is missing.
+
+### Troubleshooting quick guide
+- LinkedIn auth/challenge: if task logs show challenge/checkpoint/captcha or auth failures, verify credentials/secrets, retry later, and use a low-frequency scrape profile.
+- Stale Grafana data: run a new scraper task, then refresh dashboard time range and confirm Prometheus target `celery-worker` is up.
+- Playwright runtime/container notes: run scraper tasks from `celery-worker` (it includes the runtime); local host runs without the container image may fail due to missing browser deps.
 
 ### Observability
 - Prometheus scrapes backend metrics target at `backend:8000/metrics` every 15s.

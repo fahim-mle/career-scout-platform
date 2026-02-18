@@ -1,7 +1,7 @@
 """Application configuration loaded from environment variables and secrets files."""
 
 from pathlib import Path
-from typing import List, Union
+from typing import List, Optional, Union
 from urllib.parse import quote_plus, urlsplit, urlunsplit
 
 from pydantic import Field, field_validator, model_validator
@@ -40,6 +40,13 @@ class Settings(BaseSettings):
 
     # Logging
     LOG_LEVEL: str = "INFO"
+
+    # LLM
+    LLM_PROVIDER: str = "ollama"
+    OLLAMA_BASE_URL: str = "http://ollama:11434"
+    OLLAMA_MODEL: str = "llama3.2:3b"
+    OPENAI_API_KEY: Optional[str] = None
+    OPENAI_MODEL: str = "gpt-4"
 
     # Scraper credentials
     SCRAPER_ENABLED: bool = False
