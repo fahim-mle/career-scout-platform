@@ -235,15 +235,17 @@ class ProfileService:
 
         original = getattr(cause, "orig", None)
         constraint_name = getattr(
-            getattr(original, "diag", None), "constraint_name", ""
+            getattr(original, "diag", None), "constraint_name", None
+        ) or getattr(original, "constraint_name", "")
+        error_code = getattr(original, "pgcode", None) or getattr(
+            original, "sqlstate", ""
         )
-        pgcode = getattr(original, "pgcode", "")
 
         if constraint_name == "uq_profiles_singleton":
             return True
 
         detail = str(cause).lower()
-        return pgcode == "23505" and "uq_profiles_singleton" in detail
+        return error_code == "23505" and "uq_profiles_singleton" in detail
 
 
 __all__ = ["ProfileService"]

@@ -82,7 +82,7 @@ class TestProfileAPI:
         self, client: AsyncClient
     ) -> None:
         class BrokenCreateProfileService:
-            async def create_profile(self, payload: dict[str, Any]) -> dict[str, Any]:
+            async def create_profile(self, _payload: dict[str, Any]) -> dict[str, Any]:
                 raise ConflictError("profile singleton conflict")
 
         app.dependency_overrides[get_profile_service] = (
@@ -134,7 +134,10 @@ class TestProfileAPI:
 
     @pytest.mark.asyncio
     async def test_update_profile_success(self, client: AsyncClient) -> None:
-        await client.post("/api/v1/profile", json=build_profile_payload())
+        create_response = await client.post(
+            "/api/v1/profile", json=build_profile_payload()
+        )
+        assert create_response.status_code == 201
 
         response = await client.patch(
             "/api/v1/profile",
@@ -155,7 +158,10 @@ class TestProfileAPI:
 
     @pytest.mark.asyncio
     async def test_delete_profile_success(self, client: AsyncClient) -> None:
-        await client.post("/api/v1/profile", json=build_profile_payload())
+        create_response = await client.post(
+            "/api/v1/profile", json=build_profile_payload()
+        )
+        assert create_response.status_code == 201
 
         delete_response = await client.delete("/api/v1/profile")
         get_response = await client.get("/api/v1/profile")
