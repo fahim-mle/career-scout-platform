@@ -225,7 +225,7 @@ async def _run_linkedin_scrape_and_persist(
                         )
                         if updated_job is not None:
                             enrichment_job_ids.add(updated_job.id)
-                        updated_count += 1
+                            updated_count += 1
                         continue
 
                     duplicate_count += 1

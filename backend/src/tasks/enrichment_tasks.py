@@ -179,7 +179,10 @@ async def _run_batch_enrichment(
     if job_ids is not None:
         if not isinstance(job_ids, list):
             raise ValueError("job_ids must be a list of positive integers")
-        if any(not isinstance(job_id, int) or job_id <= 0 for job_id in job_ids):
+        if any(
+            not isinstance(job_id, int) or isinstance(job_id, bool) or job_id <= 0
+            for job_id in job_ids
+        ):
             raise ValueError("job_ids must be a list of positive integers")
 
     async with get_session() as db_session:
@@ -193,13 +196,24 @@ async def _run_batch_enrichment(
         if job_ids is not None:
             enriched = 0
             missing = 0
+            failed = 0
             unique_job_ids = list(dict.fromkeys(job_ids))
             for job_id in unique_job_ids:
-                enrichment = await enrichment_service.enrich_job(job_id=job_id)
-                if enrichment is None:
-                    missing += 1
-                else:
-                    enriched += 1
+                try:
+                    enrichment = await enrichment_service.enrich_job(job_id=job_id)
+                    if enrichment is None:
+                        missing += 1
+                    else:
+                        enriched += 1
+                except Exception as exc:
+                    failed += 1
+                    logger.error(
+                        "Failed enriching job in job_ids mode",
+                        task_id=task_id,
+                        job_id=job_id,
+                        error=str(exc),
+                        exc_info=True,
+                    )
 
             result = {
                 "status": "success",
@@ -209,7 +223,7 @@ async def _run_batch_enrichment(
                 "processed": len(unique_job_ids),
                 "enriched": enriched,
                 "missing": missing,
-                "failed": 0,
+                "failed": failed,
             }
             logger.info(
                 "Completed enrichment task in job_ids mode",

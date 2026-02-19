@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from typing import Any
 
@@ -157,3 +158,90 @@ def test_enrich_unstructured_jobs_does_not_retry_validation_errors(
         ENRICH_BATCH_TASK_RUN(task, platform="linkedin", limit=10, job_ids=[1])
 
     assert task.retry_calls == []
+
+
+def test_run_batch_enrichment_rejects_bool_job_id_values() -> None:
+    """Validation rejects bool values in job_ids while preserving message."""
+    with pytest.raises(ValueError, match="job_ids must be a list of positive integers"):
+        asyncio.run(
+            enrichment_tasks._run_batch_enrichment(
+                platform="linkedin",
+                limit=5,
+                job_ids=[True, 2],
+                task_id="task-123",
+            )
+        )
+
+
+def test_run_batch_enrichment_continues_when_single_job_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """job_ids mode continues and counts failures per job when one enrich call errors."""
+
+    class DummyAsyncSession:
+        pass
+
+    class DummySessionContext:
+        async def __aenter__(self) -> DummyAsyncSession:
+            return DummyAsyncSession()
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            del exc_type, exc, tb
+
+    class FakeJobRepository:
+        def __init__(self, db_session: DummyAsyncSession) -> None:
+            self.db_session = db_session
+
+    class FakeJobEnrichmentRepository:
+        def __init__(self, db_session: DummyAsyncSession) -> None:
+            self.db_session = db_session
+
+    class FakeJobEnrichmentService:
+        def __init__(self, job_repo: Any, enrichment_repo: Any) -> None:
+            self.job_repo = job_repo
+            self.enrichment_repo = enrichment_repo
+
+        async def enrich_job(self, job_id: int) -> Any:
+            if job_id == 1:
+                return {"id": 1}
+            if job_id == 2:
+                return None
+            raise RuntimeError("enrichment crash")
+
+    errors: list[dict[str, Any]] = []
+
+    def fake_error(message: str, **kwargs: Any) -> None:
+        errors.append({"message": message, **kwargs})
+
+    fake_logger = SimpleNamespace(info=lambda *_args, **_kwargs: None, error=fake_error)
+
+    monkeypatch.setattr(enrichment_tasks, "get_session", lambda: DummySessionContext())
+    monkeypatch.setattr(enrichment_tasks, "JobRepository", FakeJobRepository)
+    monkeypatch.setattr(
+        enrichment_tasks,
+        "JobEnrichmentRepository",
+        FakeJobEnrichmentRepository,
+    )
+    monkeypatch.setattr(
+        enrichment_tasks, "JobEnrichmentService", FakeJobEnrichmentService
+    )
+    monkeypatch.setattr(enrichment_tasks, "logger", fake_logger)
+
+    result = asyncio.run(
+        enrichment_tasks._run_batch_enrichment(
+            platform="linkedin",
+            limit=5,
+            job_ids=[1, 2, 3],
+            task_id="task-123",
+        )
+    )
+
+    assert result["status"] == "success"
+    assert result["mode"] == "job_ids"
+    assert result["processed"] == 3
+    assert result["enriched"] == 1
+    assert result["missing"] == 1
+    assert result["failed"] == 1
+    assert len(errors) == 1
+    assert errors[0]["task_id"] == "task-123"
+    assert errors[0]["job_id"] == 3
