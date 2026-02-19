@@ -295,6 +295,21 @@ def test_build_enrichment_payload_maps_salary_range_to_processed_columns() -> No
     assert result["status"] == "success"
 
 
+def test_salary_range_to_enrichment_fields_keeps_salary_period_nullable() -> None:
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+
+    result = service._salary_range_to_enrichment_fields(
+        {
+            "min": 120000,
+            "max": 150000,
+            "currency": "AUD",
+            "raw": "AUD 120000 to 150000",
+        }
+    )
+
+    assert result["salary_period"] is None
+
+
 def test_build_enrichment_payload_marks_failed_when_no_text() -> None:
     service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
     job = make_job(description_full=None, description_short=None, title="")

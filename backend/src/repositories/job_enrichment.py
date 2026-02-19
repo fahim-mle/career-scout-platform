@@ -286,7 +286,26 @@ class JobEnrichmentRepository(BaseRepository[JobEnrichment]):
                     "job_id": job_id,
                     "extractor_version": extractor_version,
                 }
-                return await self.create(create_payload)
+                try:
+                    return await self.create(create_payload)
+                except RepositoryError as exc:
+                    log.bind(error=str(exc)).warning(
+                        "Create failed during upsert; refetching once for race recovery"
+                    )
+                    try:
+                        recovered = await self.get_by_job_and_version(
+                            job_id,
+                            extractor_version,
+                        )
+                    except RepositoryError:
+                        raise exc
+
+                    if recovered is not None:
+                        log.bind(enrichment_id=recovered.id).info(
+                            "Recovered enrichment after create race"
+                        )
+                        return recovered
+                    raise exc
 
             merged_payload = self._merge_missing_fields(existing, payload)
             if not merged_payload:

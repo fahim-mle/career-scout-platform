@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -196,6 +197,77 @@ async def test_upsert_by_job_and_version_fills_missing_without_clobbering(
     assert second.salary_min == 120000
     assert second.salary_max == 150000
     assert second.salary_currency == "AUD"
+
+
+@pytest.mark.asyncio
+async def test_upsert_by_job_and_version_recovers_from_create_race(
+    db_session: AsyncSession,
+    job_factory: JobFactory,
+) -> None:
+    """Upsert refetches and returns row when create loses a race."""
+    job = await job_factory.create()
+    repo = JobEnrichmentRepository(db_session)
+    recovered = await repo.create(
+        {
+            "job_id": job.id,
+            "extractor_version": "heuristic-v1",
+            **build_payload(status="success"),
+        }
+    )
+
+    with (
+        patch.object(
+            repo,
+            "get_by_job_and_version",
+            new=AsyncMock(side_effect=[None, recovered]),
+        ) as mock_get,
+        patch.object(
+            repo,
+            "create",
+            new=AsyncMock(side_effect=RepositoryError("create failed")),
+        ) as mock_create,
+    ):
+        result = await repo.upsert_by_job_and_version(
+            job_id=job.id,
+            extractor_version="heuristic-v1",
+            payload=build_payload(status="partial"),
+        )
+
+    assert result.id == recovered.id
+    assert mock_create.await_count == 1
+    assert mock_get.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_upsert_by_job_and_version_reraises_create_error_when_refetch_missing(
+    db_session: AsyncSession,
+    job_factory: JobFactory,
+) -> None:
+    """Upsert re-raises create error when refetch cannot recover row."""
+    job = await job_factory.create()
+    repo = JobEnrichmentRepository(db_session)
+
+    with (
+        patch.object(
+            repo,
+            "get_by_job_and_version",
+            new=AsyncMock(side_effect=[None, None]),
+        ) as mock_get,
+        patch.object(
+            repo,
+            "create",
+            new=AsyncMock(side_effect=RepositoryError("create failed")),
+        ) as mock_create,
+    ):
+        with pytest.raises(RepositoryError, match="create failed"):
+            await repo.upsert_by_job_and_version(
+                job_id=job.id,
+                extractor_version="heuristic-v1",
+                payload=build_payload(status="partial"),
+            )
+
+    assert mock_create.await_count == 1
+    assert mock_get.await_count == 2
 
 
 @pytest.mark.asyncio

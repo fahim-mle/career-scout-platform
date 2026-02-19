@@ -658,7 +658,7 @@ class JobEnrichmentService:
             "salary_min": salary_range.get("min"),
             "salary_max": salary_range.get("max"),
             "salary_currency": salary_range.get("currency"),
-            "salary_period": salary_range.get("period", "unknown"),
+            "salary_period": salary_range.get("period"),
             "salary_raw": salary_range.get("raw"),
         }
 
