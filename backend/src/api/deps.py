@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.health import HealthService
 from src.db.session import get_session_dependency
 from src.repositories.job import JobRepository
+from src.repositories.job_enrichment import JobEnrichmentRepository
 from src.repositories.match_score import MatchScoreRepository
 from src.repositories.profile import ProfileRepository
 from src.services.job_service import JobService
@@ -58,7 +59,10 @@ def get_job_service(db: AsyncSession = Depends(get_db_session)) -> JobService:
     Returns:
         JobService configured with a JobRepository bound to the session.
     """
-    return JobService(JobRepository(db))
+    return JobService(
+        repo=JobRepository(db),
+        enrichment_repo=JobEnrichmentRepository(db),
+    )
 
 
 def get_profile_service(db: AsyncSession = Depends(get_db_session)) -> ProfileService:

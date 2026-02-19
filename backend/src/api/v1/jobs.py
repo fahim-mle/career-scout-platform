@@ -9,14 +9,21 @@ from loguru import logger
 
 from src.api.deps import get_job_service, get_match_service
 from src.core.exceptions import BusinessLogicError, NotFoundError
-from src.schemas.job import JobCreate, JobResponse, JobUpdate
+from src.schemas.job import (
+    EnrichedJobResponse,
+    JobCreate,
+    JobResponse,
+    JobUpdate,
+    RawJobResponse,
+)
 from src.services.job_service import JobService
 from src.services.match_service import MatchService
 
 router = APIRouter()
+raw_jobs_router = APIRouter()
 
 
-@router.get("", response_model=list[JobResponse])
+@router.get("", response_model=list[EnrichedJobResponse])
 async def list_jobs(
     service: Annotated[JobService, Depends(get_job_service)],
     match_service: Annotated[MatchService, Depends(get_match_service)],
@@ -25,7 +32,7 @@ async def list_jobs(
     sort: str = Query("date", pattern="^(date|relevance)$"),
     platform: str | None = None,
     is_active: bool = True,
-) -> list[JobResponse]:
+) -> list[EnrichedJobResponse]:
     """List jobs with pagination and optional filters.
 
     Args:
@@ -44,13 +51,51 @@ async def list_jobs(
     """
     try:
         if sort == "relevance":
-            return await match_service.list_jobs_by_relevance(
+            relevance_jobs = await match_service.list_jobs_by_relevance(
                 skip=skip,
                 limit=limit,
                 platform=platform,
                 is_active=is_active,
             )
-        return await service.list_jobs(
+            return [EnrichedJobResponse.model_validate(job) for job in relevance_jobs]
+        return await service.list_enriched_jobs(
+            skip=skip,
+            limit=limit,
+            platform=platform,
+            is_active=is_active,
+        )
+    except BusinessLogicError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@raw_jobs_router.get("/scraped_raw_jobs", response_model=list[RawJobResponse])
+async def list_scraped_raw_jobs(
+    service: Annotated[JobService, Depends(get_job_service)],
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    platform: str | None = None,
+    is_active: bool = True,
+) -> list[RawJobResponse]:
+    """List raw scraped jobs with pagination and optional filters.
+
+    Args:
+        service: Job service dependency.
+        skip: Number of rows to offset.
+        limit: Maximum number of rows to return.
+        platform: Optional platform filter.
+        is_active: Whether to return active jobs only.
+
+    Returns:
+        List of raw scraped job response payloads.
+
+    Raises:
+        HTTPException: If business validation fails.
+    """
+    try:
+        return await service.list_raw_jobs(
             skip=skip,
             limit=limit,
             platform=platform,

@@ -2,11 +2,12 @@
 
 from fastapi import APIRouter
 
-from src.api.v1 import health_router, jobs_router, profile_router
+from src.api.v1 import health_router, jobs_router, profile_router, raw_jobs_router
 
 v1_router = APIRouter()
 v1_router.include_router(health_router, prefix="/health", tags=["health"])
 v1_router.include_router(jobs_router, prefix="/jobs", tags=["jobs"])
+v1_router.include_router(raw_jobs_router, tags=["jobs"])
 v1_router.include_router(profile_router, prefix="/profile", tags=["profile"])
 
 api_router = APIRouter()

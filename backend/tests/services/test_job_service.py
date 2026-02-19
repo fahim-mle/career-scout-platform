@@ -16,6 +16,7 @@ from src.core.exceptions import (
     RepositoryError,
 )
 from src.repositories.job import JobRepository
+from src.repositories.job_enrichment import JobEnrichmentRepository
 from src.schemas.job import JobCreate, JobUpdate
 from src.services.job_service import JobService
 
@@ -41,6 +42,27 @@ def make_job(**overrides: Any) -> SimpleNamespace:
         "is_active": True,
         "skills": ["Python"],
         "salary_range": {"min": 100000, "max": 140000, "currency": "AUD"},
+    }
+    data.update(overrides)
+    return SimpleNamespace(**data)
+
+
+def make_enrichment(**overrides: Any) -> SimpleNamespace:
+    """Build a job enrichment-like object for list enrichment tests."""
+    now = datetime.now(timezone.utc)
+    data: dict[str, Any] = {
+        "id": 1,
+        "job_id": 1,
+        "extractor_version": "heuristic-v1",
+        "status": "success",
+        "skills": ["Python", "FastAPI"],
+        "job_type": "Full-time",
+        "salary_min": 120000,
+        "salary_max": 160000,
+        "salary_currency": "AUD",
+        "salary_period": "year",
+        "salary_raw": "$120k-$160k AUD",
+        "enriched_at": now,
     }
     data.update(overrides)
     return SimpleNamespace(**data)
@@ -109,9 +131,42 @@ class FakeJobRepository:
         return updated
 
 
-def make_service(repo: FakeJobRepository) -> JobService:
+@dataclass
+class FakeJobEnrichmentRepository:
+    """In-memory async repository stub for enrichment reads."""
+
+    enrichments: list[SimpleNamespace] = field(default_factory=list)
+    fail_list_by_job_ids: bool = False
+
+    async def list_by_job_ids(self, job_ids: list[int]) -> list[SimpleNamespace]:
+        """Return enrichments matching requested job ids.
+
+        Args:
+            job_ids: Raw job ids to search.
+
+        Returns:
+            Matching enrichment rows.
+
+        Raises:
+            RepositoryError: If configured to fail.
+        """
+        if self.fail_list_by_job_ids:
+            raise RepositoryError("repo list_by_job_ids failed")
+        job_id_set = set(job_ids)
+        return [item for item in self.enrichments if item.job_id in job_id_set]
+
+
+def make_service(
+    repo: FakeJobRepository,
+    enrichment_repo: FakeJobEnrichmentRepository | None = None,
+) -> JobService:
     """Create JobService with a casted repository test double."""
-    return JobService(cast(JobRepository, repo))
+    cast_enrichment = (
+        cast(JobEnrichmentRepository, enrichment_repo)
+        if enrichment_repo is not None
+        else None
+    )
+    return JobService(cast(JobRepository, repo), enrichment_repo=cast_enrichment)
 
 
 @pytest.mark.asyncio
@@ -278,3 +333,63 @@ async def test_repository_error_translates_to_business_logic_error() -> None:
 
     with pytest.raises(BusinessLogicError, match="Failed to update job"):
         await service.update_job(1, JobUpdate(title="New title"))
+
+
+@pytest.mark.asyncio
+async def test_list_enriched_jobs_merges_latest_enrichment_values() -> None:
+    repo = FakeJobRepository(
+        jobs={
+            1: make_job(id=1, external_id="job-1"),
+            2: make_job(id=2, external_id="job-2"),
+        }
+    )
+    enrichment_repo = FakeJobEnrichmentRepository(
+        enrichments=[
+            make_enrichment(
+                id=4,
+                job_id=1,
+                extractor_version="heuristic-v1",
+                skills=["Python"],
+                enriched_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ),
+            make_enrichment(
+                id=5,
+                job_id=1,
+                extractor_version="heuristic-v2",
+                skills=["Python", "FastAPI"],
+                job_type="Contract",
+                salary_min=900,
+                salary_max=1100,
+                salary_period="day",
+                enriched_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    service = make_service(repo, enrichment_repo)
+
+    result = await service.list_enriched_jobs()
+
+    assert [job.id for job in result] == [2, 1]
+    assert result[0].skills is None
+    assert result[0].enrichment_status is None
+    assert result[1].skills == ["Python", "FastAPI"]
+    assert result[1].job_type == "Contract"
+    assert result[1].salary_range == {
+        "min": 900,
+        "max": 1100,
+        "currency": "AUD",
+        "period": "day",
+        "raw": "$120k-$160k AUD",
+    }
+    assert result[1].enrichment_version == "heuristic-v2"
+    assert result[1].enrichment_updated_at == datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_list_enriched_jobs_converts_enrichment_repo_error() -> None:
+    repo = FakeJobRepository(jobs={1: make_job(id=1)})
+    enrichment_repo = FakeJobEnrichmentRepository(fail_list_by_job_ids=True)
+    service = make_service(repo, enrichment_repo)
+
+    with pytest.raises(BusinessLogicError, match="Failed to list jobs"):
+        await service.list_enriched_jobs()

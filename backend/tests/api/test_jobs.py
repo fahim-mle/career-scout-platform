@@ -17,6 +17,36 @@ from src.models.match_score import MatchScore
 from src.models.profile import Profile
 
 
+ENRICHED_REQUIRED_FIELDS = {
+    "id",
+    "created_at",
+    "updated_at",
+    "external_id",
+    "platform",
+    "url",
+    "title",
+    "company",
+    "location",
+    "description_short",
+    "description_full",
+    "posted_date",
+    "scraped_at",
+    "is_active",
+    "skills",
+    "job_type",
+    "salary_range",
+    "enrichment_status",
+    "enrichment_version",
+    "enrichment_updated_at",
+    "relevance_score",
+}
+
+
+def assert_enriched_job_shape(payload: dict[str, Any]) -> None:
+    """Assert API response contains enriched jobs contract fields."""
+    assert ENRICHED_REQUIRED_FIELDS.issubset(payload.keys())
+
+
 def build_job_payload(
     external_id: str,
     *,
@@ -79,6 +109,13 @@ class TestJobsAPI:
         assert body["title"] == payload["title"]
         assert body["is_active"] is True
 
+        list_response = await client.get("/api/v1/jobs")
+        listed_job = list_response.json()[0]
+        assert_enriched_job_shape(listed_job)
+        assert listed_job["enrichment_status"] is None
+        assert listed_job["enrichment_version"] is None
+        assert listed_job["enrichment_updated_at"] is None
+
     @pytest.mark.asyncio
     async def test_list_jobs_with_data(self, client: AsyncClient) -> None:
         await client.post("/api/v1/jobs", json=build_job_payload("api-list-1"))
@@ -91,6 +128,30 @@ class TestJobsAPI:
         assert len(body) == 2
         assert body[0]["external_id"] == "api-list-2"
         assert body[1]["external_id"] == "api-list-1"
+        assert_enriched_job_shape(body[0])
+        assert_enriched_job_shape(body[1])
+        assert body[0]["skills"] is None
+        assert body[0]["job_type"] is None
+        assert body[0]["salary_range"] is None
+        assert body[0]["enrichment_status"] is None
+        assert body[0]["enrichment_version"] is None
+        assert body[0]["enrichment_updated_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_scraped_raw_jobs_returns_raw_schema(
+        self, client: AsyncClient
+    ) -> None:
+        await client.post("/api/v1/jobs", json=build_job_payload("api-raw-list-1"))
+
+        response = await client.get("/api/v1/scraped_raw_jobs")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body) == 1
+        assert body[0]["external_id"] == "api-raw-list-1"
+        assert "enrichment_status" not in body[0]
+        assert "enrichment_version" not in body[0]
+        assert "enrichment_updated_at" not in body[0]
 
     @pytest.mark.asyncio
     async def test_list_jobs_pagination(self, client: AsyncClient) -> None:
