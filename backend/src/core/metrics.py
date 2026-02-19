@@ -224,6 +224,30 @@ enrichment_errors_total: Counter = _get_or_create_counter(
     labelnames=("platform",),
 )
 
+scoring_runs_total: Counter = _get_or_create_counter(
+    name="scoring_runs_total",
+    documentation="Total scoring task runs labeled by platform and status.",
+    labelnames=("platform", "status"),
+)
+
+scoring_duration_seconds: Histogram = _get_or_create_histogram(
+    name="scoring_duration_seconds",
+    documentation="Scoring task duration in seconds labeled by platform.",
+    labelnames=("platform",),
+)
+
+jobs_scored_total: Counter = _get_or_create_counter(
+    name="jobs_scored_total",
+    documentation="Total number of jobs scored, labeled by platform.",
+    labelnames=("platform",),
+)
+
+scoring_errors_total: Counter = _get_or_create_counter(
+    name="scoring_errors_total",
+    documentation="Total scoring task errors, labeled by platform.",
+    labelnames=("platform",),
+)
+
 jobs_in_database_total: Gauge = _get_or_create_gauge(
     name="jobs_in_database_total",
     documentation="Current known jobs in database for a platform.",
@@ -405,6 +429,70 @@ def increment_enrichment_errors(platform: str, count: int = 1) -> None:
     enrichment_errors_total.labels(platform=platform).inc(count)
 
 
+def increment_scoring_runs(platform: str, status: str) -> None:
+    """Increment scoring run counter.
+
+    Args:
+        platform: Source platform label.
+        status: Run status label, one of success/failure/skipped.
+
+    Raises:
+        ValueError: If platform or status labels are invalid.
+    """
+    _validate_platform(platform)
+    _validate_status(status)
+
+    scoring_runs_total.labels(platform=platform, status=status).inc()
+
+
+def observe_scoring_duration(platform: str, duration_seconds: float) -> None:
+    """Observe scoring task duration.
+
+    Args:
+        platform: Source platform label.
+        duration_seconds: Task runtime in seconds.
+
+    Raises:
+        ValueError: If labels or metric values are invalid.
+    """
+    _validate_platform(platform)
+    _validate_non_negative(duration_seconds, "duration_seconds")
+
+    scoring_duration_seconds.labels(platform=platform).observe(duration_seconds)
+
+
+def increment_jobs_scored(platform: str, count: int = 1) -> None:
+    """Increment scored jobs counter.
+
+    Args:
+        platform: Source platform label.
+        count: Number of scored jobs to add.
+
+    Raises:
+        ValueError: If platform label is invalid or count is negative.
+    """
+    _validate_platform(platform)
+    _validate_non_negative(float(count), "count")
+
+    jobs_scored_total.labels(platform=platform).inc(count)
+
+
+def increment_scoring_errors(platform: str, count: int = 1) -> None:
+    """Increment scoring error counter.
+
+    Args:
+        platform: Source platform label.
+        count: Number of scoring errors to add.
+
+    Raises:
+        ValueError: If platform label is invalid or count is negative.
+    """
+    _validate_platform(platform)
+    _validate_non_negative(float(count), "count")
+
+    scoring_errors_total.labels(platform=platform).inc(count)
+
+
 def set_jobs_in_database(platform: str, total: int) -> None:
     """Set jobs-in-database gauge for platform.
 
@@ -478,21 +566,29 @@ __all__ = [
     "increment_jobs_duplicates",
     "increment_jobs_errors",
     "increment_jobs_enriched",
+    "increment_jobs_scored",
     "increment_jobs_created",
     "increment_jobs_scraped",
     "increment_jobs_updated",
+    "increment_scoring_errors",
+    "increment_scoring_runs",
     "increment_scraper_runs",
     "jobs_duplicates_total",
     "jobs_enriched_total",
     "jobs_errors_total",
     "jobs_created_total",
     "jobs_in_database_total",
+    "jobs_scored_total",
     "jobs_scraped_total",
     "jobs_updated_total",
     "observe_enrichment_duration",
+    "observe_scoring_duration",
     "observe_db_query_duration",
     "observe_scraper_duration",
     "scraper_duration_seconds",
     "scraper_runs_total",
+    "scoring_duration_seconds",
+    "scoring_errors_total",
+    "scoring_runs_total",
     "set_jobs_in_database",
 ]

@@ -18,7 +18,11 @@ celery_app = Celery(
     "career_scout",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
-    include=["src.tasks.scraper_tasks", "src.tasks.enrichment_tasks"],
+    include=[
+        "src.tasks.scraper_tasks",
+        "src.tasks.enrichment_tasks",
+        "src.tasks.scoring_tasks",
+    ],
 )
 
 celery_app.conf.update(
@@ -37,6 +41,12 @@ celery_app.conf.update(
         },
         "daily-linkedin-enrichment-backup": {
             "task": "src.tasks.enrichment_tasks.enrich_unstructured_jobs_task",
+            # Backup schedule runs before scoring to avoid overlap confusion.
+            "schedule": crontab(hour=9, minute=30),
+            "kwargs": {"platform": "linkedin"},
+        },
+        "daily-linkedin-scoring": {
+            "task": "src.tasks.scoring_tasks.score_all_unscored_jobs_task",
             "schedule": crontab(hour=10, minute=0),
             "kwargs": {"platform": "linkedin"},
         },

@@ -27,6 +27,7 @@ MAX_ENRICHMENT_TASK_RETRIES = 3
 DEFAULT_RETRY_COUNTDOWN_SECONDS = 60
 DEFAULT_ENRICHMENT_LIMIT = 200
 LINKEDIN_PLATFORM = "linkedin"
+SCORING_TASK_NAME = "src.tasks.scoring_tasks.score_all_unscored_jobs_task"
 
 
 def _exception_chain(exc: BaseException) -> list[BaseException]:
@@ -147,6 +148,36 @@ def _record_enrichment_result_metrics(
             platform=platform,
             enriched=enriched,
             failed=failed,
+            task_id=task_id,
+            error=str(exc),
+        )
+
+
+def _enqueue_scoring_task(platform: str, task_id: str | None) -> None:
+    """Queue scoring task after successful enrichment.
+
+    Args:
+        platform: Source platform label for scoring context.
+        task_id: Optional parent Celery task identifier.
+
+    Returns:
+        None.
+    """
+    try:
+        celery_app.send_task(
+            SCORING_TASK_NAME,
+            kwargs={"platform": platform},
+            countdown=5,
+        )
+        logger.info(
+            "Queued scoring task after enrichment",
+            platform=platform,
+            task_id=task_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to queue scoring task after enrichment",
+            platform=platform,
             task_id=task_id,
             error=str(exc),
         )
@@ -313,6 +344,10 @@ def enrich_unstructured_jobs_task(
             failed=int(result.get("failed", 0)),
             task_id=self.request.id,
         )
+
+        if int(result.get("enriched", 0)) > 0:
+            _enqueue_scoring_task(platform=platform, task_id=self.request.id)
+
         run_status = "success"
         return result
     except Exception as exc:
@@ -433,6 +468,10 @@ def enrich_single_job_task(
             failed=0,
             task_id=self.request.id,
         )
+
+        if int(result.get("enriched", 0)) > 0:
+            _enqueue_scoring_task(platform=platform, task_id=self.request.id)
+
         run_status = "success"
         return result
     except Exception as exc:
