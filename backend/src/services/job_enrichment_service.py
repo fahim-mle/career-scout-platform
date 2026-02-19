@@ -12,7 +12,9 @@ from typing import Any
 from loguru import logger
 
 from src.core.exceptions import BusinessLogicError, RepositoryError
+from src.models.job_enrichment import JobEnrichment
 from src.models.job import Job
+from src.repositories.job_enrichment import JobEnrichmentRepository
 from src.repositories.job import JobRepository
 
 MAX_EXTRACTED_SKILLS = 20
@@ -199,13 +201,22 @@ def _detect_currency(text_window: str, currency_tokens: list[str]) -> str | None
 class JobEnrichmentService:
     """Service layer for extracting and persisting skills from job descriptions."""
 
-    def __init__(self, repo: JobRepository):
+    def __init__(
+        self,
+        job_repo: JobRepository,
+        enrichment_repo: JobEnrichmentRepository,
+        extractor_version: str = "heuristic-v1",
+    ):
         """Initialize JobEnrichmentService.
 
         Args:
-            repo: Repository used for job persistence operations.
+            job_repo: Repository used for raw job read operations.
+            enrichment_repo: Repository used for enrichment persistence operations.
+            extractor_version: Version token for this extraction implementation.
         """
-        self.repo = repo
+        self.job_repo = job_repo
+        self.enrichment_repo = enrichment_repo
+        self.extractor_version = extractor_version
 
     def extract_skills_from_description(self, text: str) -> list[str]:
         """Extract canonical skills from free-text job descriptions.
@@ -419,13 +430,13 @@ class JobEnrichmentService:
             ) from exc
 
     def build_enrichment_payload(self, job: Job) -> dict[str, Any]:
-        """Build update payload for a job if skills enrichment is needed.
+        """Build processed enrichment payload from raw job text.
 
         Args:
             job: Job entity candidate for enrichment.
 
         Returns:
-            Update payload with ``skills`` key when enrichment is possible, otherwise empty.
+            Processed payload suitable for ``job_enrichments`` persistence.
 
         Raises:
             BusinessLogicError: If extraction fails.
@@ -449,42 +460,37 @@ class JobEnrichmentService:
 
         if not combined_text:
             log.debug("Skipping payload build because description is missing")
-            return {}
+            return {"status": "failed"}
 
         payload: dict[str, Any] = {}
 
-        if not self._has_non_empty_skills(getattr(job, "skills", None)):
-            skills = self.extract_skills_from_description(combined_text)
-            if skills:
-                payload["skills"] = skills
-            else:
-                log.debug("No skills extracted from description")
+        skills = self.extract_skills_from_description(combined_text)
+        if skills:
+            payload["skills"] = skills
+        else:
+            log.debug("No skills extracted from description")
 
-        if not self._has_non_empty_string(getattr(job, "job_type", None)):
-            job_type = self.extract_job_type_from_text(combined_text)
-            if job_type:
-                payload["job_type"] = job_type
+        job_type = self.extract_job_type_from_text(combined_text)
+        if job_type:
+            payload["job_type"] = job_type
 
-        if not self._has_non_empty_salary_range(getattr(job, "salary_range", None)):
-            salary_range = self.extract_salary_range_from_text(combined_text)
-            if salary_range:
-                payload["salary_range"] = salary_range
+        salary_range = self.extract_salary_range_from_text(combined_text)
+        if salary_range:
+            payload.update(self._salary_range_to_enrichment_fields(salary_range))
 
-        if not payload:
-            log.debug("No enrichment fields extracted from job text")
-            return {}
+        payload["status"] = self._determine_status(payload)
 
         log.bind(fields=sorted(payload.keys())).info("Built enrichment payload")
         return payload
 
-    async def enrich_job(self, job_id: int) -> Job | None:
-        """Enrich one job record with extracted skills when currently missing.
+    async def enrich_job(self, job_id: int) -> JobEnrichment | None:
+        """Enrich one raw job and persist processed enrichment output.
 
         Args:
             job_id: Target job identifier.
 
         Returns:
-            Updated job, unchanged existing job, or ``None`` when not found.
+            Upserted enrichment record, or ``None`` when raw job is not found.
 
         Raises:
             BusinessLogicError: If repository operations fail.
@@ -495,7 +501,7 @@ class JobEnrichmentService:
         log.info("Starting job enrichment")
 
         try:
-            job = await self.repo.get_by_id(job_id)
+            job = await self.job_repo.get_by_id(job_id)
         except RepositoryError as exc:
             log.bind(error=str(exc)).error("Failed to fetch job for enrichment")
             raise BusinessLogicError("Failed to enrich job.") from exc
@@ -505,27 +511,24 @@ class JobEnrichmentService:
             return None
 
         payload = self.build_enrichment_payload(job)
-        if not payload:
-            log.info("Job enrichment skipped")
-            return job
 
         try:
-            updated = await self.repo.update(job_id, payload)
+            enrichment = await self.enrichment_repo.upsert_by_job_and_version(
+                job_id=job.id,
+                extractor_version=self.extractor_version,
+                payload=payload,
+            )
         except (RepositoryError, ValueError) as exc:
-            log.bind(error=str(exc)).error("Failed to persist enriched job fields")
+            log.bind(error=str(exc)).error("Failed to persist enrichment output")
             raise BusinessLogicError("Failed to enrich job.") from exc
 
-        if updated is None:
-            log.warning("Job disappeared during enrichment update")
-            return None
-
         log.bind(fields=sorted(payload.keys())).info("Job enrichment completed")
-        return updated
+        return enrichment
 
     async def enrich_jobs_with_missing_skills(
         self, limit: int = 200, platform: str | None = None
     ) -> dict[str, int]:
-        """Batch-enrich jobs that are missing skills.
+        """Batch-enrich active jobs into processed enrichment rows.
 
         Args:
             limit: Maximum number of jobs to scan.
@@ -549,7 +552,7 @@ class JobEnrichmentService:
             raise BusinessLogicError(f"limit must be between 1 and {MAX_BATCH_LIMIT}.")
 
         try:
-            jobs = await self.repo.get_all(
+            jobs = await self.job_repo.get_all(
                 skip=0,
                 limit=limit,
                 platform=platform,
@@ -565,12 +568,12 @@ class JobEnrichmentService:
             summary["processed"] += 1
             payload = self.build_enrichment_payload(job)
 
-            if not payload:
-                summary["skipped"] += 1
-                continue
-
             try:
-                updated = await self.repo.update(job.id, payload)
+                await self.enrichment_repo.upsert_by_job_and_version(
+                    job_id=job.id,
+                    extractor_version=self.extractor_version,
+                    payload=payload,
+                )
             except (RepositoryError, ValueError) as exc:
                 summary["failed"] += 1
                 logger.bind(
@@ -581,69 +584,59 @@ class JobEnrichmentService:
                 ).error("Failed to enrich job in batch")
                 continue
 
-            if updated is None:
-                summary["failed"] += 1
-                logger.bind(
-                    service=self.__class__.__name__,
-                    operation="enrich_jobs_with_missing_skills",
-                    job_id=getattr(job, "id", None),
-                ).warning("Job disappeared during batch enrichment")
-                continue
-
-            summary["enriched"] += 1
+            if payload.get("status") == "failed":
+                summary["skipped"] += 1
+            else:
+                summary["enriched"] += 1
 
         log.bind(**summary).info("Completed batch enrichment")
         return summary
 
-    def _has_non_empty_skills(self, skills: object) -> bool:
-        """Determine whether an existing skills payload should be preserved.
+    def _salary_range_to_enrichment_fields(
+        self,
+        salary_range: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Convert legacy salary range payload into enrichment columns.
 
         Args:
-            skills: Candidate skills value from a job record.
+            salary_range: Legacy extracted salary range payload.
 
         Returns:
-            ``True`` when skills contain at least one non-empty string.
+            Processed salary fields for ``job_enrichments``.
         """
-        if not isinstance(skills, list):
-            return False
+        return {
+            "salary_min": salary_range.get("min"),
+            "salary_max": salary_range.get("max"),
+            "salary_currency": salary_range.get("currency"),
+            "salary_period": salary_range.get("period", "unknown"),
+            "salary_raw": salary_range.get("raw"),
+        }
 
-        return any(isinstance(item, str) and item.strip() for item in skills)
-
-    def _has_non_empty_string(self, value: object) -> bool:
-        """Determine whether a value is a non-empty string.
+    def _determine_status(self, payload: dict[str, Any]) -> str:
+        """Determine enrichment status based on extracted field coverage.
 
         Args:
-            value: Candidate string value.
+            payload: Built enrichment payload.
 
         Returns:
-            ``True`` when value is a non-empty string.
+            ``success`` when all target field groups were extracted,
+            ``partial`` when at least one was extracted, otherwise ``failed``.
         """
-        return isinstance(value, str) and bool(value.strip())
-
-    def _has_non_empty_salary_range(self, salary_range: object) -> bool:
-        """Determine whether salary range already has required payload fields.
-
-        Args:
-            salary_range: Candidate salary range value from a job record.
-
-        Returns:
-            ``True`` when salary range has non-empty required fields.
-        """
-        if not isinstance(salary_range, dict):
-            return False
-
-        minimum = salary_range.get("min")
-        maximum = salary_range.get("max")
-        currency = salary_range.get("currency")
-
-        return (
-            isinstance(minimum, (int, float))
-            and not isinstance(minimum, bool)
-            and isinstance(maximum, (int, float))
-            and not isinstance(maximum, bool)
-            and isinstance(currency, str)
-            and bool(currency.strip())
+        has_skills = isinstance(payload.get("skills"), list) and bool(payload["skills"])
+        has_job_type = isinstance(payload.get("job_type"), str) and bool(
+            payload["job_type"].strip()
         )
+        has_salary = (
+            payload.get("salary_min") is not None
+            and payload.get("salary_max") is not None
+        )
+
+        extracted_groups = int(has_skills) + int(has_job_type) + int(has_salary)
+        if extracted_groups == 3:
+            return "success"
+        if extracted_groups > 0:
+            return "partial"
+        return "failed"
 
 
 __all__ = ["JobEnrichmentService"]
