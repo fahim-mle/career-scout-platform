@@ -54,11 +54,11 @@ class JobEnrichment(BaseModel):
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     skills: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     job_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    salary_min: Mapped[int | float | None] = mapped_column(
+    salary_min: Mapped[float | None] = mapped_column(
         Numeric(12, 2, asdecimal=False),
         nullable=True,
     )
-    salary_max: Mapped[int | float | None] = mapped_column(
+    salary_max: Mapped[float | None] = mapped_column(
         Numeric(12, 2, asdecimal=False),
         nullable=True,
     )

@@ -163,8 +163,7 @@
   ],
   "Kubernetes": [
     "k8s",
-    "kubernetes cluster",
-    "helm charts"
+    "kubernetes cluster"
   ],
   "LightGBM": [
     "light gbm",

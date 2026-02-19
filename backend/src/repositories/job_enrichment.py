@@ -18,6 +18,9 @@ from src.repositories.base import BaseRepository
 
 PROTECTED_UPDATE_FIELDS = frozenset({"id", "created_at", "updated_at", "job_id"})
 PROTECTED_CREATE_FIELDS = frozenset({"id", "created_at", "updated_at"})
+PROTECTED_UPSERT_FIELDS = frozenset(
+    {"id", "created_at", "updated_at", "job_id", "extractor_version"}
+)
 
 
 class JobEnrichmentRepository(BaseRepository[JobEnrichment]):
@@ -261,21 +264,27 @@ class JobEnrichmentRepository(BaseRepository[JobEnrichment]):
         )
         log.info("Upserting job enrichment by version")
 
+        invalid = PROTECTED_UPSERT_FIELDS & payload.keys()
+        if invalid:
+            blocked = ", ".join(sorted(invalid))
+            raise ValueError(
+                f"Cannot set protected fields in upsert payload: {blocked}"
+            )
+
         for field in payload:
-            if field in PROTECTED_CREATE_FIELDS or field.startswith("_"):
+            if field.startswith("_"):
                 raise ValueError(f"Unknown or unsafe upsert field: {field}")
             if field not in self._column_names:
                 raise ValueError(f"Unknown or unsafe upsert field: {field}")
 
         try:
-            with db_query_timer(query_type="job_enrichment_upsert_lookup"):
-                existing = await self.get_by_job_and_version(job_id, extractor_version)
+            existing = await self.get_by_job_and_version(job_id, extractor_version)
 
             if existing is None:
                 create_payload = {
+                    **payload,
                     "job_id": job_id,
                     "extractor_version": extractor_version,
-                    **payload,
                 }
                 return await self.create(create_payload)
 

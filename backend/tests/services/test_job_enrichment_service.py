@@ -154,7 +154,9 @@ class FakeJobEnrichmentRepository:
 
         merged = current.__dict__.copy()
         for field_name, value in payload.items():
-            if self._is_missing(merged.get(field_name)) and not self._is_missing(value):
+            if self._is_missing(
+                merged.get(field_name), field_name
+            ) and not self._is_missing(value, field_name):
                 merged[field_name] = value
 
         merged["updated_at"] = datetime.now(timezone.utc)
@@ -163,11 +165,12 @@ class FakeJobEnrichmentRepository:
         return row
 
     @staticmethod
-    def _is_missing(value: object) -> bool:
+    def _is_missing(value: object, field: str) -> bool:
         """Determine whether a test value is considered missing.
 
         Args:
             value: Candidate value.
+            field: Field name for type-aware checks.
 
         Returns:
             True when value is missing.
@@ -176,7 +179,9 @@ class FakeJobEnrichmentRepository:
             return True
         if isinstance(value, str):
             return not value.strip()
-        if isinstance(value, (list, dict)):
+        if field == "skills" and isinstance(value, list):
+            return len(value) == 0
+        if field == "confidence_by_field" and isinstance(value, dict):
             return len(value) == 0
         return False
 
@@ -213,6 +218,16 @@ def test_extract_skills_from_description_finds_canonical_from_aliases() -> None:
     assert result == ["Python", "React", "Node.js", "PostgreSQL", "Docker", "AWS"]
 
 
+def test_extract_skills_from_description_avoids_punctuation_false_positives() -> None:
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+
+    result = service.extract_skills_from_description(
+        "Experience with react-native and node_js wrappers is preferred."
+    )
+
+    assert result == []
+
+
 def test_extract_job_type_from_text_detects_and_normalizes() -> None:
     service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
 
@@ -237,6 +252,28 @@ def test_extract_salary_range_from_text_parses_explicit_yearly_range() -> None:
         "period": "year",
         "raw": "AUD 120000 to 150000",
     }
+
+
+def test_extract_salary_range_preserves_raw_text_for_whitespace_heavy_ranges() -> None:
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+
+    result = service.extract_salary_range_from_text(
+        "Salary: AUD   120000 to 150000 per annum based on experience."
+    )
+
+    assert result is not None
+    assert result["raw"] == "AUD   120000 to 150000"
+
+
+def test_extract_salary_range_preserves_raw_text_for_single_salary() -> None:
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+
+    result = service.extract_salary_range_from_text(
+        "Compensation is AUD   45 per hour for this role."
+    )
+
+    assert result is not None
+    assert result["raw"] == "AUD   45"
 
 
 def test_build_enrichment_payload_maps_salary_range_to_processed_columns() -> None:

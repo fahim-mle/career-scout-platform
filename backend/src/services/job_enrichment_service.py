@@ -50,6 +50,9 @@ SALARY_SINGLE_PATTERN = re.compile(
 def _load_skills_dictionary() -> dict[str, list[str]]:
     """Load static skills dictionary configuration from JSON.
 
+    The result is cached for process lifetime unless
+    ``reload_skills_dictionary_cache`` is called.
+
     Returns:
         Mapping of canonical skill name to alias list.
 
@@ -81,6 +84,19 @@ def _load_skills_dictionary() -> dict[str, list[str]]:
     return dictionary
 
 
+def reload_skills_dictionary_cache() -> None:
+    """Reload cached skills dictionary and compiled regex patterns.
+
+    Clears LRU caches used by skills extraction so runtime config updates
+    are picked up without restarting the process.
+    """
+    _load_skills_dictionary.cache_clear()
+    _build_skill_patterns.cache_clear()
+    logger.bind(component="job_enrichment_service").info(
+        "Cleared skills dictionary caches"
+    )
+
+
 def _normalize_text(text: str) -> str:
     """Normalize text for deterministic skill pattern matching.
 
@@ -98,11 +114,14 @@ def _normalize_text(text: str) -> str:
 def _build_skill_patterns() -> tuple[tuple[re.Pattern[str], str], ...]:
     """Build cached regex patterns for canonical and alias skill matching.
 
+    Patterns are cached for process lifetime unless
+    ``reload_skills_dictionary_cache`` is called.
+
     Returns:
         Tuple of regex pattern and canonical skill mappings.
     """
     patterns: list[tuple[re.Pattern[str], str]] = []
-    boundary_guard = r"[a-z0-9.]"
+    boundary_guard = r"[a-z0-9._/\-]"
 
     for canonical, aliases in _load_skills_dictionary().items():
         candidates = [canonical, *aliases]
@@ -196,6 +215,29 @@ def _detect_currency(text_window: str, currency_tokens: list[str]) -> str | None
     if "$" in normalized_tokens:
         return "AUD"
     return None
+
+
+def _extract_raw_salary_text(
+    original_text: str,
+    pattern: re.Pattern[str],
+    fallback: str,
+) -> str:
+    """Extract salary raw text from original input with fallback.
+
+    Args:
+        original_text: Original unsanitized text.
+        pattern: Salary regex pattern to apply to original text.
+        fallback: Fallback snippet when original pattern matching fails.
+
+    Returns:
+        Raw salary text slice from original text when possible, otherwise fallback.
+    """
+    original_match = pattern.search(original_text)
+    if original_match is not None:
+        raw_value = original_match.group(0).strip()
+        if raw_value:
+            return raw_value
+    return fallback.strip()
 
 
 class JobEnrichmentService:
@@ -360,7 +402,11 @@ class JobEnrichmentService:
                     "min": _normalize_amount(minimum),
                     "max": _normalize_amount(maximum),
                     "currency": currency,
-                    "raw": text[range_match.start() : range_match.end()].strip(),
+                    "raw": _extract_raw_salary_text(
+                        text,
+                        SALARY_RANGE_PATTERN,
+                        range_match.group(0),
+                    ),
                 }
                 if period is not None:
                     payload["period"] = period
@@ -402,7 +448,11 @@ class JobEnrichmentService:
                     "max": normalized_amount,
                     "currency": currency,
                     "period": period,
-                    "raw": text[single_match.start() : single_match.end()].strip(),
+                    "raw": _extract_raw_salary_text(
+                        text,
+                        SALARY_SINGLE_PATTERN,
+                        single_match.group(0),
+                    ),
                 }
                 log.bind(
                     currency=currency,
@@ -639,4 +689,4 @@ class JobEnrichmentService:
         return "failed"
 
 
-__all__ = ["JobEnrichmentService"]
+__all__ = ["JobEnrichmentService", "reload_skills_dictionary_cache"]

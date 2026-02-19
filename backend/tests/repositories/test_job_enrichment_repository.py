@@ -199,6 +199,40 @@ async def test_upsert_by_job_and_version_fills_missing_without_clobbering(
 
 
 @pytest.mark.asyncio
+async def test_upsert_rejects_job_id_inside_payload(
+    db_session: AsyncSession,
+    job_factory: JobFactory,
+) -> None:
+    """Upsert rejects payload attempts to override protected job_id."""
+    job = await job_factory.create()
+    repo = JobEnrichmentRepository(db_session)
+
+    with pytest.raises(ValueError, match="protected fields"):
+        await repo.upsert_by_job_and_version(
+            job_id=job.id,
+            extractor_version="heuristic-v1",
+            payload={"job_id": job.id + 1, **build_payload()},
+        )
+
+
+@pytest.mark.asyncio
+async def test_upsert_rejects_extractor_version_inside_payload(
+    db_session: AsyncSession,
+    job_factory: JobFactory,
+) -> None:
+    """Upsert rejects payload attempts to override protected extractor version."""
+    job = await job_factory.create()
+    repo = JobEnrichmentRepository(db_session)
+
+    with pytest.raises(ValueError, match="protected fields"):
+        await repo.upsert_by_job_and_version(
+            job_id=job.id,
+            extractor_version="heuristic-v1",
+            payload={"extractor_version": "heuristic-v999", **build_payload()},
+        )
+
+
+@pytest.mark.asyncio
 async def test_list_by_job_ids_returns_rows_for_requested_jobs(
     db_session: AsyncSession,
     job_factory: JobFactory,
