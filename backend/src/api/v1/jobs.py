@@ -51,13 +51,12 @@ async def list_jobs(
     """
     try:
         if sort == "relevance":
-            relevance_jobs = await match_service.list_jobs_by_relevance(
+            return await match_service.list_jobs_by_relevance(
                 skip=skip,
                 limit=limit,
                 platform=platform,
                 is_active=is_active,
             )
-            return [EnrichedJobResponse.model_validate(job) for job in relevance_jobs]
         return await service.list_enriched_jobs(
             skip=skip,
             limit=limit,

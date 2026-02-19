@@ -12,6 +12,7 @@ import pytest
 from src.ai.llm_client import BaseLLMClient
 from src.core.exceptions import BusinessLogicError, NotFoundError, RepositoryError
 from src.repositories.job import JobRepository
+from src.repositories.job_enrichment import JobEnrichmentRepository
 from src.repositories.match_score import MatchScoreRepository
 from src.repositories.profile import ProfileRepository
 from src.services.match_service import MatchService
@@ -257,6 +258,47 @@ class FakeMatchScoreRepository:
         return rows[skip : skip + limit]
 
 
+@dataclass
+class FakeJobEnrichmentRepository:
+    """In-memory async repository stub for job enrichments."""
+
+    enrichments_by_job_id: dict[int, list[SimpleNamespace]] = field(
+        default_factory=dict
+    )
+    get_latest_calls: list[int] = field(default_factory=list)
+    list_by_job_ids_calls: list[list[int]] = field(default_factory=list)
+
+    async def get_latest_by_job_id(self, job_id: int) -> SimpleNamespace | None:
+        """Fetch latest enrichment for one job id.
+
+        Args:
+            job_id: Target job identifier.
+
+        Returns:
+            Newest enrichment row when present, otherwise ``None``.
+        """
+        self.get_latest_calls.append(job_id)
+        rows = self.enrichments_by_job_id.get(job_id, [])
+        if not rows:
+            return None
+        return max(rows, key=lambda row: (row.enriched_at, row.id))
+
+    async def list_by_job_ids(self, job_ids: list[int]) -> list[SimpleNamespace]:
+        """List all enrichment rows for provided job ids.
+
+        Args:
+            job_ids: Job ids filter.
+
+        Returns:
+            Flattened enrichment rows for matching job ids.
+        """
+        self.list_by_job_ids_calls.append(job_ids.copy())
+        rows: list[SimpleNamespace] = []
+        for job_id in job_ids:
+            rows.extend(self.enrichments_by_job_id.get(job_id, []))
+        return rows
+
+
 class FakeLLMClient(BaseLLMClient):
     """Deterministic LLM test double with queued JSON responses."""
 
@@ -321,6 +363,7 @@ def make_service(
     profile_repo: FakeProfileRepository,
     match_repo: FakeMatchScoreRepository,
     llm: FakeLLMClient,
+    enrichment_repo: FakeJobEnrichmentRepository | None = None,
 ) -> MatchService:
     """Create MatchService with casted test doubles.
 
@@ -329,6 +372,7 @@ def make_service(
         profile_repo: Fake profiles repository.
         match_repo: Fake match score repository.
         llm: Fake LLM client.
+        enrichment_repo: Optional fake enrichment repository.
 
     Returns:
         Configured MatchService instance for unit tests.
@@ -337,6 +381,9 @@ def make_service(
         job_repo=cast(JobRepository, job_repo),
         profile_repo=cast(ProfileRepository, profile_repo),
         match_repo=cast(MatchScoreRepository, match_repo),
+        enrichment_repo=cast(JobEnrichmentRepository, enrichment_repo)
+        if enrichment_repo is not None
+        else None,
         llm_client=llm,
     )
 
@@ -368,6 +415,66 @@ async def test_score_job_success_creates_score() -> None:
         "Strong skills alignment with minor domain gaps."
     )
     assert llm.generate_json_calls[0][1] == 0.3
+
+
+@pytest.mark.asyncio
+async def test_score_job_prompt_prefers_enrichment_fields_with_raw_fallback() -> None:
+    job_repo = FakeJobRepository(
+        jobs={
+            1: make_job(
+                id=1,
+                skills=["Python"],
+                job_type="Contract",
+                salary_range={"min": 90000, "max": 130000, "currency": "AUD"},
+                location="Brisbane",
+            )
+        }
+    )
+    profile_repo = FakeProfileRepository(profiles={1: make_profile(id=1)})
+    match_repo = FakeMatchScoreRepository()
+    enrichment_repo = FakeJobEnrichmentRepository(
+        enrichments_by_job_id={
+            1: [
+                SimpleNamespace(
+                    id=11,
+                    job_id=1,
+                    skills=["Go", "Kubernetes"],
+                    job_type=None,
+                    salary_min=120000.0,
+                    salary_max=160000.0,
+                    salary_currency="AUD",
+                    salary_period="year",
+                    salary_raw="$120k-$160k",
+                    location_normalized=None,
+                    status="completed",
+                    extractor_version="v2",
+                    enriched_at=datetime(2026, 1, 3, tzinfo=timezone.utc),
+                )
+            ]
+        }
+    )
+    llm = FakeLLMClient(
+        responses=[
+            {
+                "score": 84,
+                "category": "Relevant",
+                "explanation": "Good alignment.",
+            }
+        ]
+    )
+    service = make_service(job_repo, profile_repo, match_repo, llm, enrichment_repo)
+
+    await service.score_job(job_id=1, profile_id=1)
+
+    prompt = llm.generate_json_calls[0][0]
+    assert '"skills": ["Go", "Kubernetes"]' in prompt
+    assert '"job_type": "Contract"' in prompt
+    assert '"location": "Brisbane"' in prompt
+    assert (
+        '"salary_range": {"currency": "AUD", "max": 160000.0, "min": 120000.0, '
+        '"period": "year", "raw": "$120k-$160k"}'
+    ) in prompt
+    assert enrichment_repo.get_latest_calls == [1]
 
 
 @pytest.mark.asyncio
@@ -517,3 +624,73 @@ async def test_list_jobs_by_relevance_returns_scored_jobs_sorted() -> None:
     assert [row.id for row in results] == [2, 1]
     assert [row.relevance_score for row in results] == [95, 82]
     assert match_repo.get_jobs_by_score_calls[0] == (7, 0, 10, None, True)
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_by_relevance_merges_latest_enrichment_metadata() -> None:
+    profile_repo = FakeProfileRepository(profiles={7: make_profile(id=7)})
+    match_repo = FakeMatchScoreRepository(
+        scored_jobs=[
+            (
+                make_job(
+                    id=2,
+                    external_id="relevance-2",
+                    location="Raw Sydney",
+                    skills=["Python"],
+                    job_type="Contract",
+                    salary_range={"min": 100000, "currency": "AUD"},
+                ),
+                95,
+            ),
+        ]
+    )
+    enrichment_repo = FakeJobEnrichmentRepository(
+        enrichments_by_job_id={
+            2: [
+                SimpleNamespace(
+                    id=22,
+                    job_id=2,
+                    skills=["Python", "FastAPI"],
+                    job_type="Full-time",
+                    salary_min=150000.0,
+                    salary_max=190000.0,
+                    salary_currency="AUD",
+                    salary_period="year",
+                    salary_raw="$150k-$190k",
+                    location_normalized="Sydney, AU",
+                    status="completed",
+                    extractor_version="v3",
+                    enriched_at=datetime(2026, 1, 10, tzinfo=timezone.utc),
+                )
+            ]
+        }
+    )
+    service = make_service(
+        FakeJobRepository(),
+        profile_repo,
+        match_repo,
+        FakeLLMClient(responses=[]),
+        enrichment_repo,
+    )
+
+    results = await service.list_jobs_by_relevance(skip=0, limit=10)
+
+    assert len(results) == 1
+    assert results[0].id == 2
+    assert results[0].relevance_score == 95
+    assert results[0].skills == ["Python", "FastAPI"]
+    assert results[0].job_type == "Full-time"
+    assert results[0].location == "Sydney, AU"
+    assert results[0].salary_range == {
+        "min": 150000.0,
+        "max": 190000.0,
+        "currency": "AUD",
+        "period": "year",
+        "raw": "$150k-$190k",
+    }
+    assert results[0].enrichment_status == "completed"
+    assert results[0].enrichment_version == "v3"
+    assert results[0].enrichment_updated_at == datetime(
+        2026, 1, 10, tzinfo=timezone.utc
+    )
+    assert enrichment_repo.list_by_job_ids_calls == [[2]]

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.deps import get_db_session, get_job_service
 from src.core.exceptions import BusinessLogicError
 from src.main import app
+from src.models.job_enrichment import JobEnrichment
 from src.models.match_score import MatchScore
 from src.models.profile import Profile
 
@@ -252,14 +253,61 @@ class TestJobsAPI:
                 ),
             ]
         )
+        db_session.add_all(
+            [
+                JobEnrichment(
+                    job_id=first_job_id,
+                    extractor_version="v1",
+                    status="completed",
+                    skills=["Python", "SQL"],
+                    job_type="Contract",
+                    salary_min=110000.0,
+                    salary_max=140000.0,
+                    salary_currency="AUD",
+                    salary_period="year",
+                    salary_raw="$110k-$140k",
+                    location_normalized="Brisbane, AU",
+                    enriched_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+                ),
+                JobEnrichment(
+                    job_id=second_job_id,
+                    extractor_version="v2",
+                    status="completed",
+                    skills=["Python", "FastAPI", "PostgreSQL"],
+                    job_type="Full-time",
+                    salary_min=150000.0,
+                    salary_max=190000.0,
+                    salary_currency="AUD",
+                    salary_period="year",
+                    salary_raw="$150k-$190k",
+                    location_normalized="Sydney, AU",
+                    enriched_at=datetime(2026, 1, 3, tzinfo=timezone.utc),
+                ),
+            ]
+        )
         await db_session.commit()
 
         response = await client.get("/api/v1/jobs?sort=relevance")
 
         assert response.status_code == 200
         body = response.json()
+        assert_enriched_job_shape(body[0])
+        assert_enriched_job_shape(body[1])
         assert [item["id"] for item in body] == [second_job_id, first_job_id]
         assert [item["relevance_score"] for item in body] == [94, 72]
+        assert body[0]["skills"] == ["Python", "FastAPI", "PostgreSQL"]
+        assert body[0]["job_type"] == "Full-time"
+        assert body[0]["location"] == "Sydney, AU"
+        assert body[0]["salary_range"] == {
+            "min": 150000.0,
+            "max": 190000.0,
+            "currency": "AUD",
+            "period": "year",
+            "raw": "$150k-$190k",
+        }
+        assert body[0]["enrichment_status"] == "completed"
+        assert body[0]["enrichment_version"] == "v2"
+        assert body[0]["enrichment_updated_at"] is not None
 
     @pytest.mark.asyncio
     async def test_list_jobs_sort_relevance_without_profile_returns_400(

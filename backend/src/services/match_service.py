@@ -11,9 +11,10 @@ from src.ai.llm_client import BaseLLMClient, get_llm_client
 from src.ai.prompts import job_scoring_prompt
 from src.core.exceptions import BusinessLogicError, NotFoundError, RepositoryError
 from src.repositories.job import JobRepository
+from src.repositories.job_enrichment import JobEnrichmentRepository
 from src.repositories.match_score import MatchScoreRepository
 from src.repositories.profile import ProfileRepository
-from src.schemas.job import JobResponse
+from src.schemas.job import EnrichedJobResponse, JobResponse
 from src.schemas.match_score import MatchScoreResponse
 from src.schemas.profile import ProfileResponse
 
@@ -28,6 +29,7 @@ class MatchService:
         job_repo: JobRepository,
         profile_repo: ProfileRepository,
         match_repo: MatchScoreRepository,
+        enrichment_repo: JobEnrichmentRepository | None = None,
         llm_client: BaseLLMClient | None = None,
     ) -> None:
         """Initialize MatchService.
@@ -36,11 +38,13 @@ class MatchService:
             job_repo: Repository used for job read operations.
             profile_repo: Repository used for profile read operations.
             match_repo: Repository used for match score upsert operations.
+            enrichment_repo: Optional repository used for processed enrichment reads.
             llm_client: Optional LLM client override for tests.
         """
         self.job_repo = job_repo
         self.profile_repo = profile_repo
         self.match_repo = match_repo
+        self.enrichment_repo = enrichment_repo
         self.llm_client = llm_client or get_llm_client()
 
     async def score_job(self, job_id: int, profile_id: int) -> MatchScoreResponse:
@@ -81,8 +85,22 @@ class MatchService:
             log.warning("Profile not found for scoring")
             raise NotFoundError(f"Profile {profile_id} not found.")
 
+        enrichment: object | None = None
+        if self.enrichment_repo is not None:
+            try:
+                enrichment = await self.enrichment_repo.get_latest_by_job_id(job_id)
+            except RepositoryError as exc:
+                log.bind(error=str(exc)).error("Failed to fetch enrichment for scoring")
+                raise BusinessLogicError(
+                    "Failed to fetch data required for scoring."
+                ) from exc
+
         try:
-            job_data = JobResponse.model_validate(job).model_dump(mode="json")
+            raw_job_data = JobResponse.model_validate(job).model_dump(mode="json")
+            job_data = self._build_scoring_job_data(
+                raw_job_data=raw_job_data,
+                enrichment=enrichment,
+            )
             profile_data = ProfileResponse.model_validate(profile).model_dump(
                 mode="json"
             )
@@ -237,7 +255,7 @@ class MatchService:
         platform: str | None = None,
         is_active: bool = True,
         profile_id: int | None = None,
-    ) -> list[JobResponse]:
+    ) -> list[EnrichedJobResponse]:
         """List jobs ordered by relevance score for one profile.
 
         Args:
@@ -248,7 +266,7 @@ class MatchService:
             profile_id: Optional profile id; falls back to the first profile.
 
         Returns:
-            Job responses including ``relevance_score``.
+            Enriched job responses including ``relevance_score``.
 
         Raises:
             BusinessLogicError: If profile resolution or repository calls fail.
@@ -293,15 +311,208 @@ class MatchService:
             log.bind(error=str(exc)).error("Failed to list jobs by relevance")
             raise BusinessLogicError("Failed to list jobs by relevance.") from exc
 
-        responses: list[JobResponse] = []
+        if not rows:
+            return []
+
+        latest_by_job_id: dict[int, object] = {}
+        if self.enrichment_repo is not None:
+            job_ids = [getattr(job, "id", 0) for job, _ in rows]
+            try:
+                enrichments = await self.enrichment_repo.list_by_job_ids(job_ids)
+            except RepositoryError as exc:
+                log.bind(error=str(exc)).error("Failed to list enrichments by job ids")
+                raise BusinessLogicError("Failed to list jobs by relevance.") from exc
+            latest_by_job_id = self._latest_enrichment_by_job_id(enrichments)
+
+        responses: list[EnrichedJobResponse] = []
         for job, relevance_score in rows:
-            response = JobResponse.model_validate(job).model_copy(
+            raw_job = JobResponse.model_validate(job).model_copy(
                 update={"relevance_score": relevance_score}
+            )
+            response = self._build_enriched_job_response(
+                raw_job=raw_job,
+                enrichment=latest_by_job_id.get(raw_job.id),
             )
             responses.append(response)
 
         log.bind(count=len(responses)).info("Listed jobs by relevance")
         return responses
+
+    def _build_scoring_job_data(
+        self,
+        raw_job_data: dict[str, Any],
+        enrichment: object | None,
+    ) -> dict[str, Any]:
+        """Build LLM job payload with processed-first enrichment fallbacks.
+
+        Args:
+            raw_job_data: Raw job payload derived from persisted job fields.
+            enrichment: Optional latest enrichment row for the job.
+
+        Returns:
+            Job payload for prompt construction.
+        """
+        job_data = raw_job_data.copy()
+        if enrichment is None:
+            return job_data
+
+        enriched_salary = self._build_salary_range_from_enrichment(enrichment)
+        if enriched_salary is not None:
+            job_data["salary_range"] = enriched_salary
+
+        job_data["skills"] = getattr(enrichment, "skills", None) or raw_job_data.get(
+            "skills"
+        )
+        job_data["job_type"] = getattr(
+            enrichment, "job_type", None
+        ) or raw_job_data.get("job_type")
+        job_data["location"] = getattr(
+            enrichment, "location_normalized", None
+        ) or raw_job_data.get("location")
+        return job_data
+
+    def _build_enriched_job_response(
+        self,
+        raw_job: JobResponse,
+        enrichment: object | None,
+    ) -> EnrichedJobResponse:
+        """Merge raw job plus optional enrichment into enriched response schema.
+
+        Args:
+            raw_job: Raw job response generated from repository row.
+            enrichment: Optional enrichment row matched by job id.
+
+        Returns:
+            Enriched job response for API output.
+        """
+        salary_range = self._build_salary_range_from_enrichment(enrichment)
+        if salary_range is None:
+            salary_range = raw_job.salary_range
+
+        return EnrichedJobResponse(
+            id=raw_job.id,
+            created_at=raw_job.created_at,
+            updated_at=raw_job.updated_at,
+            external_id=raw_job.external_id,
+            platform=raw_job.platform,
+            url=raw_job.url,
+            title=raw_job.title,
+            company=raw_job.company,
+            location=getattr(enrichment, "location_normalized", None)
+            or raw_job.location,
+            description_short=raw_job.description_short,
+            description_full=raw_job.description_full,
+            posted_date=raw_job.posted_date,
+            scraped_at=raw_job.scraped_at,
+            is_active=raw_job.is_active,
+            skills=getattr(enrichment, "skills", None) or raw_job.skills,
+            job_type=getattr(enrichment, "job_type", None) or raw_job.job_type,
+            salary_range=salary_range,
+            enrichment_status=getattr(enrichment, "status", None),
+            enrichment_version=getattr(enrichment, "extractor_version", None),
+            enrichment_updated_at=self._as_datetime(
+                getattr(enrichment, "enriched_at", None)
+            ),
+            relevance_score=raw_job.relevance_score,
+        )
+
+    def _build_salary_range_from_enrichment(
+        self,
+        enrichment: object | None,
+    ) -> dict[str, Any] | None:
+        """Build salary range payload from enrichment salary columns.
+
+        Args:
+            enrichment: Optional enrichment row.
+
+        Returns:
+            Salary dictionary when any salary field exists, otherwise ``None``.
+        """
+        if enrichment is None:
+            return None
+
+        salary_range = {
+            "min": getattr(enrichment, "salary_min", None),
+            "max": getattr(enrichment, "salary_max", None),
+            "currency": getattr(enrichment, "salary_currency", None),
+            "period": getattr(enrichment, "salary_period", None),
+            "raw": getattr(enrichment, "salary_raw", None),
+        }
+        if all(value is None for value in salary_range.values()):
+            return None
+        return salary_range
+
+    def _latest_enrichment_by_job_id(
+        self,
+        enrichments: list[object],
+    ) -> dict[int, object]:
+        """Select the newest enrichment row for each job id.
+
+        Args:
+            enrichments: Candidate enrichment rows returned by repository.
+
+        Returns:
+            Mapping of job id to latest enrichment row.
+        """
+        latest: dict[int, object] = {}
+
+        for row in enrichments:
+            job_id = getattr(row, "job_id", None)
+            if not isinstance(job_id, int):
+                continue
+
+            current = latest.get(job_id)
+            if current is None:
+                latest[job_id] = row
+                continue
+
+            if self._is_newer_enrichment(candidate=row, current=current):
+                latest[job_id] = row
+
+        return latest
+
+    def _is_newer_enrichment(self, candidate: object, current: object) -> bool:
+        """Determine whether candidate enrichment is newer than current.
+
+        Args:
+            candidate: Candidate enrichment row.
+            current: Existing selected enrichment row.
+
+        Returns:
+            ``True`` when candidate should replace current.
+        """
+        candidate_enriched_at = self._as_datetime(
+            getattr(candidate, "enriched_at", None)
+        )
+        current_enriched_at = self._as_datetime(getattr(current, "enriched_at", None))
+
+        if candidate_enriched_at is not None and current_enriched_at is not None:
+            if candidate_enriched_at != current_enriched_at:
+                return candidate_enriched_at > current_enriched_at
+        elif candidate_enriched_at is not None:
+            return True
+        elif current_enriched_at is not None:
+            return False
+
+        candidate_id = getattr(candidate, "id", 0)
+        current_id = getattr(current, "id", 0)
+        if isinstance(candidate_id, int) and isinstance(current_id, int):
+            return candidate_id > current_id
+        return False
+
+    @staticmethod
+    def _as_datetime(value: object) -> datetime | None:
+        """Safely cast a value to datetime.
+
+        Args:
+            value: Candidate datetime object.
+
+        Returns:
+            Datetime when value is datetime, otherwise ``None``.
+        """
+        if isinstance(value, datetime):
+            return value
+        return None
 
     def _determine_category(self, score: int) -> str:
         """Map numeric relevance score into canonical category label.

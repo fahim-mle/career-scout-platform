@@ -84,12 +84,13 @@ def get_match_service(db: AsyncSession = Depends(get_db_session)) -> MatchServic
         db: Active async DB session provided by dependency injection.
 
     Returns:
-        MatchService configured with job, profile, and score repositories.
+        MatchService configured with job, profile, score, and enrichment repositories.
     """
     return MatchService(
         job_repo=JobRepository(db),
         profile_repo=ProfileRepository(db),
         match_repo=MatchScoreRepository(db),
+        enrichment_repo=JobEnrichmentRepository(db),
     )
 
 
