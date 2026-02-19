@@ -7,10 +7,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from loguru import logger
 
-from src.api.deps import get_job_service
+from src.api.deps import get_job_service, get_match_service
 from src.core.exceptions import BusinessLogicError, NotFoundError
 from src.schemas.job import JobCreate, JobResponse, JobUpdate
 from src.services.job_service import JobService
+from src.services.match_service import MatchService
 
 router = APIRouter()
 
@@ -18,8 +19,10 @@ router = APIRouter()
 @router.get("", response_model=list[JobResponse])
 async def list_jobs(
     service: Annotated[JobService, Depends(get_job_service)],
+    match_service: Annotated[MatchService, Depends(get_match_service)],
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    sort: str = Query("date", pattern="^(date|relevance)$"),
     platform: str | None = None,
     is_active: bool = True,
 ) -> list[JobResponse]:
@@ -29,6 +32,7 @@ async def list_jobs(
         service: Job service dependency.
         skip: Number of rows to offset.
         limit: Maximum number of rows to return.
+        sort: Sort strategy; date order or relevance score order.
         platform: Optional platform filter.
         is_active: Whether to return active jobs only.
 
@@ -39,6 +43,13 @@ async def list_jobs(
         HTTPException: If business validation fails.
     """
     try:
+        if sort == "relevance":
+            return await match_service.list_jobs_by_relevance(
+                skip=skip,
+                limit=limit,
+                platform=platform,
+                is_active=is_active,
+            )
         return await service.list_jobs(
             skip=skip,
             limit=limit,

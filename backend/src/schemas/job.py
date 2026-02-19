@@ -72,6 +72,7 @@ class JobResponse(BaseModel):
     is_active: bool
     skills: list[str] | None
     salary_range: dict[str, Any] | None
+    relevance_score: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

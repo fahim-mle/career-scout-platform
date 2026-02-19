@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import RepositoryError
 from src.core.metrics import db_query_timer
+from src.models.job import Job
 from src.models.match_score import MatchScore
 from src.repositories.base import BaseRepository
 
@@ -403,6 +404,76 @@ class MatchScoreRepository(BaseRepository[MatchScore]):
         except SQLAlchemyError as exc:
             log.bind(error=str(exc)).error("Failed to list match scores for jobs")
             raise RepositoryError("Failed to list match scores for jobs.") from exc
+
+    async def get_jobs_by_score(
+        self,
+        profile_id: int,
+        skip: int = 0,
+        limit: int = 100,
+        platform: str | None = None,
+        is_active: bool = True,
+    ) -> list[tuple[Job, int]]:
+        """Fetch jobs joined with profile scores ordered by relevance.
+
+        Args:
+            profile_id: Profile primary key used for score filtering.
+            skip: Number of rows to offset.
+            limit: Maximum rows to return (max 1000).
+            platform: Optional platform filter.
+            is_active: Active status filter on jobs.
+
+        Returns:
+            List of ``(Job, relevance_score)`` tuples sorted by relevance.
+
+        Raises:
+            ValueError: If pagination values are invalid.
+            RepositoryError: If database query fails.
+        """
+        if skip < 0:
+            raise ValueError("skip must be greater than or equal to 0")
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        if limit > 1000:
+            raise ValueError("limit cannot exceed 1000")
+
+        log = logger.bind(
+            repository=self.__class__.__name__,
+            operation="get_jobs_by_score",
+            profile_id=profile_id,
+            skip=skip,
+            limit=limit,
+            platform=platform,
+            is_active=is_active,
+        )
+        log.debug("Fetching jobs ordered by relevance score")
+
+        try:
+            query = (
+                select(Job, MatchScore.relevance_score)
+                .join(MatchScore, MatchScore.job_id == Job.id)
+                .where(
+                    MatchScore.profile_id == profile_id,
+                    Job.is_active == is_active,
+                )
+            )
+            if platform is not None:
+                query = query.where(Job.platform == platform)
+
+            with db_query_timer(query_type="match_score_get_jobs_by_score"):
+                result = await self.db.execute(
+                    query.order_by(
+                        MatchScore.relevance_score.desc(),
+                        MatchScore.scored_at.desc(),
+                    )
+                    .offset(skip)
+                    .limit(limit)
+                )
+
+            rows = result.all()
+            return [(row[0], row[1]) for row in rows]
+        except SQLAlchemyError as exc:
+            log.bind(error=str(exc)).error("Failed to fetch jobs by relevance score")
+            raise RepositoryError("Failed to fetch jobs by relevance score.") from exc
 
     def _merge_missing_fields(
         self,

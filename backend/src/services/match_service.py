@@ -230,6 +230,79 @@ class MatchService:
         log.bind(scored_count=scored_count).info("Completed batch scoring")
         return scored_count
 
+    async def list_jobs_by_relevance(
+        self,
+        skip: int = 0,
+        limit: int = 100,
+        platform: str | None = None,
+        is_active: bool = True,
+        profile_id: int | None = None,
+    ) -> list[JobResponse]:
+        """List jobs ordered by relevance score for one profile.
+
+        Args:
+            skip: Number of rows to offset.
+            limit: Maximum rows to return.
+            platform: Optional platform filter.
+            is_active: Active status filter.
+            profile_id: Optional profile id; falls back to the first profile.
+
+        Returns:
+            Job responses including ``relevance_score``.
+
+        Raises:
+            BusinessLogicError: If profile resolution or repository calls fail.
+        """
+        log = logger.bind(
+            service=self.__class__.__name__,
+            operation="list_jobs_by_relevance",
+            skip=skip,
+            limit=limit,
+            platform=platform,
+            is_active=is_active,
+            profile_id=profile_id,
+        )
+        log.info("Listing jobs by relevance")
+
+        resolved_profile_id = profile_id
+        if resolved_profile_id is None:
+            try:
+                profile = await self.profile_repo.get_first()
+            except RepositoryError as exc:
+                log.bind(error=str(exc)).error("Failed to fetch profile for relevance")
+                raise BusinessLogicError(
+                    "Failed to fetch profile for relevance sorting."
+                ) from exc
+
+            if profile is None:
+                log.warning("Cannot list jobs by relevance without a profile")
+                raise BusinessLogicError(
+                    "Create a profile first before sorting jobs by relevance."
+                )
+            resolved_profile_id = profile.id
+
+        try:
+            rows = await self.match_repo.get_jobs_by_score(
+                profile_id=resolved_profile_id,
+                skip=skip,
+                limit=limit,
+                platform=platform,
+                is_active=is_active,
+            )
+        except (RepositoryError, ValueError) as exc:
+            log.bind(error=str(exc)).error("Failed to list jobs by relevance")
+            raise BusinessLogicError("Failed to list jobs by relevance.") from exc
+
+        responses: list[JobResponse] = []
+        for job, relevance_score in rows:
+            response = JobResponse.model_validate(job).model_copy(
+                update={"relevance_score": relevance_score}
+            )
+            responses.append(response)
+
+        log.bind(count=len(responses)).info("Listed jobs by relevance")
+        return responses
+
     def _determine_category(self, score: int) -> str:
         """Map numeric relevance score into canonical category label.
 

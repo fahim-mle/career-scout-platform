@@ -140,14 +140,29 @@ class FakeProfileRepository:
         """
         return self.profiles.get(profile_id)
 
+    async def get_first(self) -> SimpleNamespace | None:
+        """Fetch the first profile ordered by id.
+
+        Returns:
+            First profile object when present, otherwise ``None``.
+        """
+        if not self.profiles:
+            return None
+        first_id = min(self.profiles.keys())
+        return self.profiles[first_id]
+
 
 @dataclass
 class FakeMatchScoreRepository:
     """In-memory async repository stub for match scores."""
 
     scores_by_key: dict[tuple[int, int], SimpleNamespace] = field(default_factory=dict)
+    scored_jobs: list[tuple[SimpleNamespace, int]] = field(default_factory=list)
     fail_upsert_ids: set[int] = field(default_factory=set)
     upsert_calls: list[tuple[int, int, dict[str, Any]]] = field(default_factory=list)
+    get_jobs_by_score_calls: list[tuple[int, int, int, str | None, bool]] = field(
+        default_factory=list
+    )
     _counter: int = 0
 
     async def get_by_job_and_profile(
@@ -209,6 +224,37 @@ class FakeMatchScoreRepository:
         row = SimpleNamespace(**merged)
         self.scores_by_key[(job_id, profile_id)] = row
         return row
+
+    async def get_jobs_by_score(
+        self,
+        profile_id: int,
+        skip: int = 0,
+        limit: int = 100,
+        platform: str | None = None,
+        is_active: bool = True,
+    ) -> list[tuple[SimpleNamespace, int]]:
+        """List scored jobs for assertions in relevance listing tests.
+
+        Args:
+            profile_id: Target profile id.
+            skip: Pagination offset.
+            limit: Pagination cap.
+            platform: Optional platform filter.
+            is_active: Active status filter.
+
+        Returns:
+            Filtered scored job tuples.
+        """
+        self.get_jobs_by_score_calls.append(
+            (profile_id, skip, limit, platform, is_active)
+        )
+        rows = [
+            row
+            for row in self.scored_jobs
+            if row[0].is_active is is_active
+            and (platform is None or row[0].platform == platform)
+        ]
+        return rows[skip : skip + limit]
 
 
 class FakeLLMClient(BaseLLMClient):
@@ -435,3 +481,39 @@ def test_determine_category_boundary_mapping() -> None:
     assert service._determine_category(50) == "Somewhat Relevant"
     assert service._determine_category(49) == "Not Relevant"
     assert service._determine_category(0) == "Not Relevant"
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_by_relevance_requires_profile() -> None:
+    service = make_service(
+        FakeJobRepository(),
+        FakeProfileRepository(),
+        FakeMatchScoreRepository(),
+        FakeLLMClient(responses=[]),
+    )
+
+    with pytest.raises(BusinessLogicError, match="Create a profile first"):
+        await service.list_jobs_by_relevance()
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_by_relevance_returns_scored_jobs_sorted() -> None:
+    profile_repo = FakeProfileRepository(profiles={7: make_profile(id=7)})
+    match_repo = FakeMatchScoreRepository(
+        scored_jobs=[
+            (make_job(id=2, external_id="relevance-2"), 95),
+            (make_job(id=1, external_id="relevance-1"), 82),
+        ]
+    )
+    service = make_service(
+        FakeJobRepository(),
+        profile_repo,
+        match_repo,
+        FakeLLMClient(responses=[]),
+    )
+
+    results = await service.list_jobs_by_relevance(skip=0, limit=10)
+
+    assert [row.id for row in results] == [2, 1]
+    assert [row.relevance_score for row in results] == [95, 82]
+    assert match_repo.get_jobs_by_score_calls[0] == (7, 0, 10, None, True)

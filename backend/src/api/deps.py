@@ -8,8 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.health import HealthService
 from src.db.session import get_session_dependency
 from src.repositories.job import JobRepository
+from src.repositories.match_score import MatchScoreRepository
 from src.repositories.profile import ProfileRepository
 from src.services.job_service import JobService
+from src.services.match_service import MatchService
 from src.services.profile_service import ProfileService
 
 
@@ -71,6 +73,22 @@ def get_profile_service(db: AsyncSession = Depends(get_db_session)) -> ProfileSe
     return ProfileService(ProfileRepository(db))
 
 
+def get_match_service(db: AsyncSession = Depends(get_db_session)) -> MatchService:
+    """Provide a match service dependency.
+
+    Args:
+        db: Active async DB session provided by dependency injection.
+
+    Returns:
+        MatchService configured with job, profile, and score repositories.
+    """
+    return MatchService(
+        job_repo=JobRepository(db),
+        profile_repo=ProfileRepository(db),
+        match_repo=MatchScoreRepository(db),
+    )
+
+
 DBSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 __all__ = [
@@ -78,6 +96,7 @@ __all__ = [
     "get_db_session",
     "get_health_service",
     "get_job_service",
+    "get_match_service",
     "get_profile_service",
     "get_request_id",
 ]

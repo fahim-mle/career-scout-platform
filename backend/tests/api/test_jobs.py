@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_db_session, get_job_service
 from src.core.exceptions import BusinessLogicError
 from src.main import app
+from src.models.match_score import MatchScore
+from src.models.profile import Profile
 
 
 def build_job_payload(
@@ -143,6 +146,72 @@ class TestJobsAPI:
 
         assert response.status_code == 400
         assert "invalid platform" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_list_jobs_sort_relevance_returns_scored_jobs(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        first_job_response = await client.post(
+            "/api/v1/jobs", json=build_job_payload("api-sort-relevance-1")
+        )
+        second_job_response = await client.post(
+            "/api/v1/jobs", json=build_job_payload("api-sort-relevance-2")
+        )
+
+        profile = Profile(
+            name="Sort Tester",
+            location="Brisbane",
+            experience_years=5,
+            skills=["Python", "FastAPI"],
+            preferences={"remote": True},
+        )
+        db_session.add(profile)
+        await db_session.commit()
+        await db_session.refresh(profile)
+
+        first_job_id = first_job_response.json()["id"]
+        second_job_id = second_job_response.json()["id"]
+        db_session.add_all(
+            [
+                MatchScore(
+                    job_id=first_job_id,
+                    profile_id=profile.id,
+                    relevance_score=72,
+                    category="Relevant",
+                    explanation="Good fit",
+                    scored_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                ),
+                MatchScore(
+                    job_id=second_job_id,
+                    profile_id=profile.id,
+                    relevance_score=94,
+                    category="Most Relevant",
+                    explanation="Excellent fit",
+                    scored_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+                ),
+            ]
+        )
+        await db_session.commit()
+
+        response = await client.get("/api/v1/jobs?sort=relevance")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert [item["id"] for item in body] == [second_job_id, first_job_id]
+        assert [item["relevance_score"] for item in body] == [94, 72]
+
+    @pytest.mark.asyncio
+    async def test_list_jobs_sort_relevance_without_profile_returns_400(
+        self, client: AsyncClient
+    ) -> None:
+        await client.post(
+            "/api/v1/jobs", json=build_job_payload("api-sort-no-profile-1")
+        )
+
+        response = await client.get("/api/v1/jobs?sort=relevance")
+
+        assert response.status_code == 400
+        assert "create a profile first" in response.json()["detail"].lower()
 
     @pytest.mark.asyncio
     async def test_get_job_by_id_success(self, client: AsyncClient) -> None:
