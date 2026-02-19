@@ -87,7 +87,12 @@ python3 backend/scripts/test_llm_client.py
 - Implemented: LinkedIn list scraping + detail-page enrichment for `description_full`, `description_short`, and `job_type`.
 - Implemented: Celery tasks for both single query runs and profile-set runs.
 - Implemented: Australia-first profile configuration with Brisbane-priority profiles.
-- Current limit: `skills` and `salary_range` extraction are deferred for a later milestone.
+- Current state: skills/job_type/compensation extraction now runs in the processed enrichment layer (`job_enrichments`) while raw `jobs` remains source-of-truth.
+
+### Enrichment Data Model
+- `jobs` remains the raw source-of-truth from scraping and ingestion.
+- `job_enrichments` stores processed parser output (`skills`, normalized salary fields, job type, confidence metadata).
+- Enrichment rows are versioned by `extractor_version` with one row per `(job_id, extractor_version)`.
 
 ### Scraper Configuration
 - Required env vars: `SCRAPER_ENABLED`, `LINKEDIN_EMAIL`, `LINKEDIN_PASSWORD_FILE`.

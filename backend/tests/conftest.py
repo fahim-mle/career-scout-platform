@@ -109,6 +109,8 @@ async def db_session(test_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, N
         finally:
             await session.rollback()
             await session.execute(
-                text("TRUNCATE TABLE profiles, jobs RESTART IDENTITY CASCADE")
+                text(
+                    "TRUNCATE TABLE profiles, job_enrichments, jobs RESTART IDENTITY CASCADE"
+                )
             )
             await session.commit()

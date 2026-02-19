@@ -1,0 +1,583 @@
+{
+  "A/B Testing": [
+    "ab testing",
+    "a b testing",
+    "split testing",
+    "experiment design"
+  ],
+  "AWS": [
+    "amazon web services",
+    "aws cloud",
+    "aws services"
+  ],
+  "Azure": [
+    "microsoft azure",
+    "azure cloud",
+    "azure services"
+  ],
+  "Bash": [
+    "bash scripting",
+    "bash shell",
+    "shell scripting",
+    "unix shell"
+  ],
+  "BigQuery": [
+    "google bigquery",
+    "bigquery warehouse",
+    "bq"
+  ],
+  "CatBoost": [
+    "catboost library",
+    "cat boost"
+  ],
+  "Celery": [
+    "celery workers",
+    "celery task queue",
+    "celery beat"
+  ],
+  "CI/CD": [
+    "ci cd",
+    "continuous integration",
+    "continuous delivery",
+    "continuous deployment",
+    "build pipeline",
+    "deployment pipeline"
+  ],
+  "Computer Vision": [
+    "computer vision models",
+    "vision models",
+    "image processing"
+  ],
+  "CSS": [
+    "cascading style sheets",
+    "css3",
+    "stylesheets"
+  ],
+  "Data Visualization": [
+    "data visualisation",
+    "data viz",
+    "visual analytics",
+    "dashboarding"
+  ],
+  "Data Warehousing": [
+    "data warehouse",
+    "enterprise data warehouse",
+    "modern data stack"
+  ],
+  "Django": [
+    "django framework",
+    "django rest framework",
+    "drf"
+  ],
+  "Docker": [
+    "containerization",
+    "docker containers",
+    "docker compose"
+  ],
+  "Elasticsearch": [
+    "elastic search",
+    "elastic stack",
+    "elk stack",
+    "elasticsearch cluster"
+  ],
+  "ETL": [
+    "extract transform load",
+    "data pipeline",
+    "batch pipeline",
+    "etl pipeline"
+  ],
+  "Express.js": [
+    "express",
+    "expressjs",
+    "express framework"
+  ],
+  "FastAPI": [
+    "fast api",
+    "fastapi framework",
+    "python fastapi"
+  ],
+  "Feature Engineering": [
+    "feature selection",
+    "feature extraction",
+    "feature transformation"
+  ],
+  "Flask": [
+    "flask framework",
+    "python flask",
+    "flask api"
+  ],
+  "GCP": [
+    "google cloud platform",
+    "google cloud",
+    "gcp services"
+  ],
+  "Git": [
+    "git version control",
+    "git workflow",
+    "source control git"
+  ],
+  "GitHub Actions": [
+    "github action",
+    "gh actions",
+    "github workflows"
+  ],
+  "GraphQL": [
+    "graphql api",
+    "apollo graphql",
+    "graphql schema"
+  ],
+  "Hugging Face": [
+    "huggingface",
+    "hugging face transformers",
+    "hf transformers"
+  ],
+  "HTML": [
+    "html5",
+    "hypertext markup language",
+    "semantic html"
+  ],
+  "Hyperparameter Tuning": [
+    "hyperparameter optimization",
+    "parameter tuning",
+    "model tuning"
+  ],
+  "JavaScript": [
+    "js",
+    "ecmascript",
+    "javascript language"
+  ],
+  "Jupyter": [
+    "jupyter notebook",
+    "jupyter lab",
+    "ipynb"
+  ],
+  "Kafka": [
+    "apache kafka",
+    "kafka streams",
+    "kafka topics"
+  ],
+  "Keras": [
+    "keras api",
+    "tf keras",
+    "keras deep learning"
+  ],
+  "Kubernetes": [
+    "k8s",
+    "kubernetes cluster"
+  ],
+  "LightGBM": [
+    "light gbm",
+    "microsoft lightgbm",
+    "lgbm"
+  ],
+  "Matplotlib": [
+    "matplotlib pyplot",
+    "pyplot",
+    "mpl"
+  ],
+  "Model Evaluation": [
+    "model validation",
+    "performance metrics",
+    "cross validation"
+  ],
+  "MongoDB": [
+    "mongo",
+    "mongo db",
+    "mongodb atlas"
+  ],
+  "MySQL": [
+    "mysql database",
+    "mysql server",
+    "mysql db"
+  ],
+  "Next.js": [
+    "nextjs",
+    "next js",
+    "next framework"
+  ],
+  "NLP": [
+    "natural language processing",
+    "text processing",
+    "language models nlp"
+  ],
+  "NLTK": [
+    "natural language toolkit",
+    "nltk library"
+  ],
+  "NoSQL": [
+    "non relational database",
+    "non-relational database",
+    "document database",
+    "key value store"
+  ],
+  "Node.js": [
+    "nodejs",
+    "node js",
+    "node runtime",
+    "node backend"
+  ],
+  "NumPy": [
+    "numpy library",
+    "numpy arrays",
+    "numerical python"
+  ],
+  "OpenCV": [
+    "opencv library",
+    "open cv",
+    "cv2"
+  ],
+  "Pandas": [
+    "pandas library",
+    "pandas dataframe",
+    "dataframe operations"
+  ],
+  "Plotly": [
+    "plotly dash",
+    "plotly express",
+    "interactive charts"
+  ],
+  "PostgreSQL": [
+    "postgres",
+    "postgresql database",
+    "psql",
+    "postgres db"
+  ],
+  "Probability": [
+    "probability theory",
+    "probabilistic modeling",
+    "bayesian probability"
+  ],
+  "PyTorch": [
+    "torch",
+    "pytorch lightning",
+    "deep learning pytorch"
+  ],
+  "Python": [
+    "python3",
+    "python language",
+    "cpython"
+  ],
+  "RabbitMQ": [
+    "rabbit mq",
+    "amqp",
+    "message broker rabbitmq"
+  ],
+  "React": [
+    "reactjs",
+    "react.js",
+    "react hooks",
+    "react components"
+  ],
+  "Redis": [
+    "redis cache",
+    "redis datastore",
+    "in memory cache redis"
+  ],
+  "REST API": [
+    "rest",
+    "restful api",
+    "rest services",
+    "http api"
+  ],
+  "Redux": [
+    "redux toolkit",
+    "react redux",
+    "state management redux"
+  ],
+  "scikit-learn": [
+    "sklearn",
+    "scikit learn",
+    "machine learning with scikit-learn"
+  ],
+  "SciPy": [
+    "scipy library",
+    "scientific python",
+    "scipy stack"
+  ],
+  "Seaborn": [
+    "seaborn library",
+    "statistical visualization",
+    "sns plotting"
+  ],
+  "Snowflake": [
+    "snowflake data warehouse",
+    "snowflake db",
+    "snowflake cloud data platform"
+  ],
+  "spaCy": [
+    "spacy nlp",
+    "spacy library",
+    "industrial nlp"
+  ],
+  "SQL": [
+    "structured query language",
+    "sql queries",
+    "relational database query"
+  ],
+  "SQLite": [
+    "sqlite database",
+    "sqlite3",
+    "embedded sql database"
+  ],
+  "Statistics": [
+    "statistical analysis",
+    "descriptive statistics",
+    "inferential statistics"
+  ],
+  "Tailwind CSS": [
+    "tailwind",
+    "tailwindcss",
+    "utility first css"
+  ],
+  "TensorFlow": [
+    "tensorflow framework",
+    "tf",
+    "tensorflow keras"
+  ],
+  "Terraform": [
+    "infrastructure as code terraform",
+    "terraform iac",
+    "hashicorp terraform"
+  ],
+  "Time Series": [
+    "time series forecasting",
+    "temporal data analysis",
+    "forecasting models"
+  ],
+  "Transformers": [
+    "transformer models",
+    "bert",
+    "gpt models",
+    "sequence to sequence models"
+  ],
+  "TypeScript": [
+    "typescript language",
+    "ts",
+    "typed javascript"
+  ],
+  "XGBoost": [
+    "xgboost library",
+    "xg boost",
+    "gradient boosting xgboost"
+  ],
+  "Agile": [
+    "agile methodology",
+    "agile software development",
+    "agile practices"
+  ],
+  "Ansible": [
+    "ansible automation",
+    "ansible playbooks",
+    "configuration management ansible"
+  ],
+  "Apache Spark": [
+    "spark",
+    "apache spark framework",
+    "spark sql"
+  ],
+  "Argo CD": [
+    "argocd",
+    "argo cd gitops",
+    "argo continuous delivery"
+  ],
+  "Azure DevOps": [
+    "azure devops services",
+    "azure pipelines",
+    "azure repos"
+  ],
+  "Azure SQL": [
+    "azure sql database",
+    "microsoft azure sql",
+    "azure sql managed instance"
+  ],
+  "BDD": [
+    "behavior driven development",
+    "behaviour driven development",
+    "bdd testing"
+  ],
+  "Bitbucket": [
+    "atlassian bitbucket",
+    "bitbucket repositories",
+    "bitbucket pipelines"
+  ],
+  "CloudFormation": [
+    "aws cloudformation",
+    "cloudformation templates",
+    "cloudformation stacks"
+  ],
+  "Cloud Functions": [
+    "google cloud functions",
+    "gcp cloud functions",
+    "serverless cloud functions"
+  ],
+  "Cloud Run": [
+    "google cloud run",
+    "gcp cloud run",
+    "cloud run services"
+  ],
+  "Databricks": [
+    "databricks platform",
+    "azure databricks",
+    "databricks workspace"
+  ],
+  "Design Patterns": [
+    "software design patterns",
+    "object oriented design patterns",
+    "design pattern implementation"
+  ],
+  "EC2": [
+    "amazon ec2",
+    "aws ec2",
+    "ec2 instances"
+  ],
+  "GitHub": [
+    "github platform",
+    "github repositories",
+    "github collaboration"
+  ],
+  "GitLab": [
+    "gitlab platform",
+    "gitlab repositories",
+    "gitlab ci"
+  ],
+  "Grafana": [
+    "grafana dashboards",
+    "grafana monitoring",
+    "grafana alerting"
+  ],
+  "Helm": [
+    "helm charts",
+    "kubernetes helm",
+    "helm package manager"
+  ],
+  "Jenkins": [
+    "jenkins ci",
+    "jenkins pipelines",
+    "jenkins automation server"
+  ],
+  "Kanban": [
+    "kanban methodology",
+    "kanban boards",
+    "kanban workflow"
+  ],
+  "Kubeflow": [
+    "kubeflow pipelines",
+    "kubeflow platform",
+    "ml workflows on kubernetes"
+  ],
+  "Lambda": [
+    "aws lambda",
+    "amazon lambda",
+    "lambda functions"
+  ],
+  "LangChain": [
+    "langchain framework",
+    "langchain orchestration",
+    "llm chains"
+  ],
+  "Linux": [
+    "linux administration",
+    "linux systems",
+    "unix linux"
+  ],
+  "LlamaIndex": [
+    "llama index",
+    "llamaindex framework",
+    "rag indexing with llamaindex"
+  ],
+  "Looker": [
+    "google looker",
+    "looker studio",
+    "looker dashboards"
+  ],
+  "MLOps": [
+    "machine learning operations",
+    "ml ops",
+    "ml lifecycle management"
+  ],
+  "MLflow": [
+    "ml flow",
+    "mlflow tracking",
+    "mlflow experiments"
+  ],
+  "Microsoft Excel": [
+    "ms excel",
+    "excel spreadsheets",
+    "microsoft office excel"
+  ],
+  "Microsoft SQL Server": [
+    "ms sql server",
+    "mssql",
+    "sql server database"
+  ],
+  "Microsoft Word": [
+    "ms word",
+    "microsoft office word",
+    "word documents"
+  ],
+  "Model Monitoring": [
+    "ml model monitoring",
+    "model drift monitoring",
+    "production model monitoring"
+  ],
+  "Nginx": [
+    "nginx web server",
+    "nginx reverse proxy",
+    "nginx configuration"
+  ],
+  "Object-Oriented Programming": [
+    "oop",
+    "object oriented programming",
+    "object-oriented design"
+  ],
+  "Power BI": [
+    "microsoft power bi",
+    "powerbi",
+    "power bi dashboards"
+  ],
+  "Prometheus": [
+    "prometheus monitoring",
+    "prometheus metrics",
+    "prometheus alertmanager"
+  ],
+  "Prompt Engineering": [
+    "llm prompt engineering",
+    "prompt design",
+    "prompt optimization"
+  ],
+  "PySpark": [
+    "python spark",
+    "pyspark dataframe",
+    "spark with python"
+  ],
+  "S3": [
+    "amazon s3",
+    "aws s3",
+    "s3 buckets"
+  ],
+  "SageMaker": [
+    "amazon sagemaker",
+    "aws sagemaker",
+    "sagemaker studio"
+  ],
+  "Scrum": [
+    "scrum framework",
+    "scrum methodology",
+    "scrum ceremonies"
+  ],
+  "SOLID Principles": [
+    "solid design principles",
+    "object oriented solid",
+    "solid architecture principles"
+  ],
+  "Tableau": [
+    "tableau desktop",
+    "tableau dashboards",
+    "tableau visual analytics"
+  ],
+  "TDD": [
+    "test driven development",
+    "tdd testing",
+    "red green refactor"
+  ]
+}

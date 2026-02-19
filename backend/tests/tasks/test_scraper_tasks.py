@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -221,3 +222,249 @@ def test_build_job_update_payload_empty_when_no_new_values() -> None:
 
     result = scraper_tasks._build_job_update_payload(existing, scraped)
     assert result == {}
+
+
+def test_scrape_linkedin_jobs_triggers_enrichment_when_job_ids_exist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scrape task enqueues enrichment when created/updated ids are returned."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def fake_scrape_and_persist(**_kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "platform": "linkedin",
+            "query": "python",
+            "location": "remote",
+            "scraped": 2,
+            "created": 1,
+            "updated": 1,
+            "duplicates": 0,
+            "failed": 0,
+            "enrichment_job_ids": [11, 22],
+        }
+
+    enqueue_calls: list[dict[str, Any]] = []
+
+    def fake_send_task(name: str, kwargs: dict[str, Any], countdown: int) -> None:
+        enqueue_calls.append({"name": name, "kwargs": kwargs, "countdown": countdown})
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_linkedin_scrape_and_persist",
+        fake_scrape_and_persist,
+    )
+    monkeypatch.setattr(scraper_tasks.celery_app, "send_task", fake_send_task)
+
+    result = SCRAPE_TASK_RUN(task, query="python", location="remote", limit=5)
+
+    assert result["status"] == "success"
+    assert len(enqueue_calls) == 1
+    enqueue_call = enqueue_calls[0]
+    assert enqueue_call["name"] == scraper_tasks.ENRICHMENT_TASK_NAME
+    assert enqueue_call["kwargs"] == {"platform": "linkedin", "job_ids": [11, 22]}
+    assert enqueue_call["countdown"] == 5
+
+
+def test_scrape_linkedin_jobs_does_not_trigger_enrichment_without_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scrape task skips enrichment enqueue when no candidate ids are present."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def fake_scrape_and_persist(**_kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "platform": "linkedin",
+            "query": "python",
+            "location": "remote",
+            "scraped": 1,
+            "created": 0,
+            "updated": 0,
+            "duplicates": 1,
+            "failed": 0,
+            "enrichment_job_ids": [],
+        }
+
+    enqueue_calls: list[dict[str, Any]] = []
+
+    def fake_send_task(name: str, kwargs: dict[str, Any], countdown: int) -> None:
+        enqueue_calls.append({"name": name, "kwargs": kwargs, "countdown": countdown})
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_linkedin_scrape_and_persist",
+        fake_scrape_and_persist,
+    )
+    monkeypatch.setattr(scraper_tasks.celery_app, "send_task", fake_send_task)
+
+    result = SCRAPE_TASK_RUN(task, query="python", location="remote", limit=5)
+
+    assert result["status"] == "success"
+    assert enqueue_calls == []
+
+
+def test_run_linkedin_scrape_and_persist_does_not_count_none_updates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persistence summary ignores update attempts that return no updated row."""
+
+    class DummyAsyncSession:
+        pass
+
+    class DummySessionContext:
+        async def __aenter__(self) -> DummyAsyncSession:
+            return DummyAsyncSession()
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            del exc_type, exc, tb
+
+    class FakeLinkedInScraper:
+        def __init__(self, headless: bool, rate_limit_seconds: float) -> None:
+            self.headless = headless
+            self.rate_limit_seconds = rate_limit_seconds
+
+        async def __aenter__(self) -> "FakeLinkedInScraper":
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            del exc_type, exc, tb
+
+        async def scrape_jobs(
+            self,
+            query: str,
+            location: str,
+            limit: int,
+        ) -> list[dict[str, Any]]:
+            del query, location, limit
+            return [
+                {
+                    "external_id": "existing-1",
+                    "description_full": "new full",
+                },
+                {
+                    "external_id": "new-1",
+                    "description_full": "new job",
+                },
+            ]
+
+    class FakeJobRepository:
+        def __init__(self, db_session: DummyAsyncSession) -> None:
+            self.db_session = db_session
+
+        async def get_by_external_id(self, external_id: str, platform: str) -> Any:
+            del platform
+            if external_id == "existing-1":
+                return SimpleNamespace(
+                    id=7,
+                    description_full=None,
+                    description_short=None,
+                    job_type=None,
+                )
+            return None
+
+        async def update(self, job_id: int, payload: dict[str, Any]) -> Any:
+            del job_id, payload
+            return None
+
+        async def create(self, payload: dict[str, Any]) -> Any:
+            del payload
+            return SimpleNamespace(id=19)
+
+    monkeypatch.setattr(scraper_tasks, "LinkedInScraper", FakeLinkedInScraper)
+    monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
+    monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
+
+    result = asyncio.run(
+        scraper_tasks._run_linkedin_scrape_and_persist(
+            query="python",
+            location="remote",
+            limit=5,
+            task_id="task-123",
+        )
+    )
+
+    assert result["created"] == 1
+    assert result["updated"] == 0
+    assert result["enrichment_job_ids"] == [19]
+
+
+def test_run_linkedin_scrape_and_persist_counts_real_updates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persistence summary counts updates only when repository returns a row."""
+
+    class DummyAsyncSession:
+        pass
+
+    class DummySessionContext:
+        async def __aenter__(self) -> DummyAsyncSession:
+            return DummyAsyncSession()
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            del exc_type, exc, tb
+
+    class FakeLinkedInScraper:
+        def __init__(self, headless: bool, rate_limit_seconds: float) -> None:
+            self.headless = headless
+            self.rate_limit_seconds = rate_limit_seconds
+
+        async def __aenter__(self) -> "FakeLinkedInScraper":
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            del exc_type, exc, tb
+
+        async def scrape_jobs(
+            self,
+            query: str,
+            location: str,
+            limit: int,
+        ) -> list[dict[str, Any]]:
+            del query, location, limit
+            return [
+                {
+                    "external_id": "existing-1",
+                    "description_full": "new full",
+                }
+            ]
+
+    class FakeJobRepository:
+        def __init__(self, db_session: DummyAsyncSession) -> None:
+            self.db_session = db_session
+
+        async def get_by_external_id(self, external_id: str, platform: str) -> Any:
+            del external_id, platform
+            return SimpleNamespace(
+                id=21,
+                description_full=None,
+                description_short=None,
+                job_type=None,
+            )
+
+        async def update(self, job_id: int, payload: dict[str, Any]) -> Any:
+            del payload
+            return SimpleNamespace(id=job_id)
+
+        async def create(self, payload: dict[str, Any]) -> Any:
+            del payload
+            raise AssertionError("create should not be called for existing job")
+
+    monkeypatch.setattr(scraper_tasks, "LinkedInScraper", FakeLinkedInScraper)
+    monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
+    monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
+
+    result = asyncio.run(
+        scraper_tasks._run_linkedin_scrape_and_persist(
+            query="python",
+            location="remote",
+            limit=5,
+            task_id="task-123",
+        )
+    )
+
+    assert result["created"] == 0
+    assert result["updated"] == 1
+    assert result["enrichment_job_ids"] == [21]
