@@ -17,6 +17,31 @@ from src.repositories.job import JobRepository
 
 MAX_EXTRACTED_SKILLS = 20
 MAX_BATCH_LIMIT = 1000
+JOB_TYPE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bfull[\s-]?time\b"), "Full-Time"),
+    (re.compile(r"\bpart[\s-]?time\b"), "Part-Time"),
+    (re.compile(r"\bcontract\b"), "Contract"),
+    (re.compile(r"\bcasual\b"), "Casual"),
+    (re.compile(r"\bintern(ship)?\b"), "Internship"),
+    (re.compile(r"\btemporar(y|ily)\b"), "Temporary"),
+    (re.compile(r"\bfreelance\b"), "Freelance"),
+)
+SALARY_PERIOD_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"(?:/|per\s+)(hour|hr)\b|\bhourly\b"), "hour"),
+    (re.compile(r"(?:/|per\s+)day\b|\bdaily\b"), "day"),
+    (re.compile(r"(?:/|per\s+)(year|annum|annual)\b|\bannually\b"), "year"),
+)
+SALARY_RANGE_PATTERN = re.compile(
+    r"(?P<currency1>\$|a\$|aud|usd)?\s*"
+    r"(?P<min>\d[\d,]*(?:\.\d+)?)\s*(?:-|to)\s*"
+    r"(?P<currency2>\$|a\$|aud|usd)?\s*"
+    r"(?P<max>\d[\d,]*(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+SALARY_SINGLE_PATTERN = re.compile(
+    r"(?P<currency>\$|a\$|aud|usd)\s*(?P<amount>\d[\d,]*(?:\.\d+)?)",
+    re.IGNORECASE,
+)
 
 
 @lru_cache(maxsize=1)
@@ -88,6 +113,89 @@ def _build_skill_patterns() -> tuple[tuple[re.Pattern[str], str], ...]:
     return tuple(patterns)
 
 
+def _parse_amount(amount_text: str) -> float:
+    """Parse numeric compensation amount from text.
+
+    Args:
+        amount_text: Numeric text that may include commas.
+
+    Returns:
+        Parsed float amount.
+
+    Raises:
+        ValueError: If amount cannot be parsed.
+    """
+    return float(amount_text.replace(",", "").strip())
+
+
+def _normalize_amount(amount: float) -> int | float:
+    """Normalize parsed amount to int when value is whole.
+
+    Args:
+        amount: Parsed amount.
+
+    Returns:
+        Integer for whole values, otherwise float.
+    """
+    return int(amount) if float(amount).is_integer() else amount
+
+
+def _extract_period(text: str) -> str | None:
+    """Extract compensation period token from text.
+
+    Args:
+        text: Text window around matched compensation.
+
+    Returns:
+        Normalized period token when found.
+    """
+    for pattern, period in SALARY_PERIOD_PATTERNS:
+        if pattern.search(text):
+            return period
+    return None
+
+
+def _infer_period(minimum: float, maximum: float) -> str | None:
+    """Infer period token from numeric compensation ranges.
+
+    Args:
+        minimum: Lower bound amount.
+        maximum: Upper bound amount.
+
+    Returns:
+        Inferred period token when the range matches heuristics.
+    """
+    if 30 <= minimum <= 300 and 30 <= maximum <= 300:
+        return "hour"
+    if 500 <= minimum <= 2000 and 500 <= maximum <= 2000:
+        return "day"
+    if 60000 <= minimum <= 500000 and 60000 <= maximum <= 500000:
+        return "year"
+    return None
+
+
+def _detect_currency(text_window: str, currency_tokens: list[str]) -> str | None:
+    """Detect normalized currency from matched tokens and context.
+
+    Args:
+        text_window: Nearby text window for context checks.
+        currency_tokens: Currency tokens captured in regex groups.
+
+    Returns:
+        ISO-like currency code when detectable.
+    """
+    normalized_tokens = [token.casefold() for token in currency_tokens if token]
+    window = text_window.casefold()
+
+    if "usd" in normalized_tokens or re.search(r"\busd\b", window):
+        return "USD"
+    if "aud" in normalized_tokens or "a$" in normalized_tokens:
+        return "AUD"
+    if "$" in normalized_tokens:
+        return "AUD"
+    return None
+
+
 class JobEnrichmentService:
     """Service layer for extracting and persisting skills from job descriptions."""
 
@@ -148,6 +256,168 @@ class JobEnrichmentService:
                 "Failed to extract skills from description."
             ) from exc
 
+    def extract_job_type_from_text(self, text: str) -> str | None:
+        """Extract normalized job type label from job text.
+
+        Args:
+            text: Job title and/or description content.
+
+        Returns:
+            Normalized job type label when detected, otherwise ``None``.
+
+        Raises:
+            BusinessLogicError: If extraction fails unexpectedly.
+        """
+        log = logger.bind(
+            service=self.__class__.__name__, operation="extract_job_type_from_text"
+        )
+
+        if not text.strip():
+            log.debug("Input text is empty; returning no job type")
+            return None
+
+        try:
+            normalized_text = _normalize_text(text)
+            for pattern, label in JOB_TYPE_PATTERNS:
+                if pattern.search(normalized_text):
+                    log.bind(job_type=label).info("Extracted job type from text")
+                    return label
+
+            log.debug("No job type extracted from text")
+            return None
+        except Exception as exc:  # pragma: no cover - defensive wrapper
+            log.bind(error=str(exc)).error(
+                "Unexpected failure during job type extraction"
+            )
+            raise BusinessLogicError(
+                "Failed to extract job type from description."
+            ) from exc
+
+    def extract_salary_range_from_text(self, text: str) -> dict[str, Any] | None:
+        """Extract compensation range payload from job text.
+
+        Args:
+            text: Job title and/or description content.
+
+        Returns:
+            Salary range payload with ``min``, ``max``, and ``currency`` when extractable.
+
+        Raises:
+            BusinessLogicError: If extraction fails unexpectedly.
+        """
+        log = logger.bind(
+            service=self.__class__.__name__, operation="extract_salary_range_from_text"
+        )
+
+        if not text.strip():
+            log.debug("Input text is empty; returning no salary range")
+            return None
+
+        try:
+            normalized_text = _normalize_text(text)
+
+            range_match = SALARY_RANGE_PATTERN.search(normalized_text)
+            if range_match:
+                minimum = _parse_amount(range_match.group("min"))
+                maximum = _parse_amount(range_match.group("max"))
+                if minimum > maximum:
+                    minimum, maximum = maximum, minimum
+
+                context_window = normalized_text[
+                    max(0, range_match.start() - 24) : min(
+                        len(normalized_text),
+                        range_match.end() + 36,
+                    )
+                ]
+                currency = _detect_currency(
+                    context_window,
+                    [
+                        range_match.group("currency1") or "",
+                        range_match.group("currency2") or "",
+                    ],
+                )
+                if currency is None:
+                    log.debug(
+                        "Skipping salary range extraction due to missing currency"
+                    )
+                    return None
+
+                period = _extract_period(context_window) or _infer_period(
+                    minimum, maximum
+                )
+                payload: dict[str, Any] = {
+                    "min": _normalize_amount(minimum),
+                    "max": _normalize_amount(maximum),
+                    "currency": currency,
+                    "raw": text[range_match.start() : range_match.end()].strip(),
+                }
+                if period is not None:
+                    payload["period"] = period
+
+                log.bind(
+                    currency=currency,
+                    period=payload.get("period"),
+                    minimum=payload["min"],
+                    maximum=payload["max"],
+                ).info("Extracted salary range from text")
+                return payload
+
+            single_match = SALARY_SINGLE_PATTERN.search(normalized_text)
+            if single_match:
+                amount = _parse_amount(single_match.group("amount"))
+                context_window = normalized_text[
+                    max(0, single_match.start() - 24) : min(
+                        len(normalized_text),
+                        single_match.end() + 36,
+                    )
+                ]
+                period = _extract_period(context_window)
+                if period is None:
+                    log.debug(
+                        "Skipping single salary extraction without explicit period"
+                    )
+                    return None
+
+                currency = _detect_currency(
+                    context_window, [single_match.group("currency")]
+                )
+                if currency is None:
+                    log.debug("Skipping salary extraction due to missing currency")
+                    return None
+
+                normalized_amount = _normalize_amount(amount)
+                payload = {
+                    "min": normalized_amount,
+                    "max": normalized_amount,
+                    "currency": currency,
+                    "period": period,
+                    "raw": text[single_match.start() : single_match.end()].strip(),
+                }
+                log.bind(
+                    currency=currency,
+                    period=period,
+                    minimum=normalized_amount,
+                    maximum=normalized_amount,
+                ).info("Extracted single salary amount from text")
+                return payload
+
+            log.debug("No salary range extracted from text")
+            return None
+        except ValueError as exc:
+            log.bind(error=str(exc)).error(
+                "Invalid numeric value during salary extraction"
+            )
+            raise BusinessLogicError(
+                "Failed to extract salary range from description."
+            ) from exc
+        except Exception as exc:  # pragma: no cover - defensive wrapper
+            log.bind(error=str(exc)).error(
+                "Unexpected failure during salary extraction"
+            )
+            raise BusinessLogicError(
+                "Failed to extract salary range from description."
+            ) from exc
+
     def build_enrichment_payload(self, job: Job) -> dict[str, Any]:
         """Build update payload for a job if skills enrichment is needed.
 
@@ -166,29 +436,46 @@ class JobEnrichmentService:
             job_id=getattr(job, "id", None),
         )
 
-        if self._has_non_empty_skills(getattr(job, "skills", None)):
-            log.debug("Skipping payload build because job already has skills")
-            return {}
-
         description_parts = [
             part
             for part in (
+                getattr(job, "title", None),
                 getattr(job, "description_full", None),
                 getattr(job, "description_short", None),
             )
             if isinstance(part, str) and part.strip()
         ]
-        description_text = "\n".join(description_parts)
-        if not description_text:
+        combined_text = "\n".join(description_parts)
+
+        if not combined_text:
             log.debug("Skipping payload build because description is missing")
             return {}
 
-        skills = self.extract_skills_from_description(description_text)
-        if not skills:
-            log.debug("No skills extracted from description")
+        payload: dict[str, Any] = {}
+
+        if not self._has_non_empty_skills(getattr(job, "skills", None)):
+            skills = self.extract_skills_from_description(combined_text)
+            if skills:
+                payload["skills"] = skills
+            else:
+                log.debug("No skills extracted from description")
+
+        if not self._has_non_empty_string(getattr(job, "job_type", None)):
+            job_type = self.extract_job_type_from_text(combined_text)
+            if job_type:
+                payload["job_type"] = job_type
+
+        if not self._has_non_empty_salary_range(getattr(job, "salary_range", None)):
+            salary_range = self.extract_salary_range_from_text(combined_text)
+            if salary_range:
+                payload["salary_range"] = salary_range
+
+        if not payload:
+            log.debug("No enrichment fields extracted from job text")
             return {}
 
-        return {"skills": skills}
+        log.bind(fields=sorted(payload.keys())).info("Built enrichment payload")
+        return payload
 
     async def enrich_job(self, job_id: int) -> Job | None:
         """Enrich one job record with extracted skills when currently missing.
@@ -225,16 +512,14 @@ class JobEnrichmentService:
         try:
             updated = await self.repo.update(job_id, payload)
         except (RepositoryError, ValueError) as exc:
-            log.bind(error=str(exc)).error("Failed to persist enriched job skills")
+            log.bind(error=str(exc)).error("Failed to persist enriched job fields")
             raise BusinessLogicError("Failed to enrich job.") from exc
 
         if updated is None:
             log.warning("Job disappeared during enrichment update")
             return None
 
-        log.bind(skills_count=len(updated.skills or [])).info(
-            "Job enrichment completed"
-        )
+        log.bind(fields=sorted(payload.keys())).info("Job enrichment completed")
         return updated
 
     async def enrich_jobs_with_missing_skills(
@@ -323,6 +608,42 @@ class JobEnrichmentService:
             return False
 
         return any(isinstance(item, str) and item.strip() for item in skills)
+
+    def _has_non_empty_string(self, value: object) -> bool:
+        """Determine whether a value is a non-empty string.
+
+        Args:
+            value: Candidate string value.
+
+        Returns:
+            ``True`` when value is a non-empty string.
+        """
+        return isinstance(value, str) and bool(value.strip())
+
+    def _has_non_empty_salary_range(self, salary_range: object) -> bool:
+        """Determine whether salary range already has required payload fields.
+
+        Args:
+            salary_range: Candidate salary range value from a job record.
+
+        Returns:
+            ``True`` when salary range has non-empty required fields.
+        """
+        if not isinstance(salary_range, dict):
+            return False
+
+        minimum = salary_range.get("min")
+        maximum = salary_range.get("max")
+        currency = salary_range.get("currency")
+
+        return (
+            isinstance(minimum, (int, float))
+            and not isinstance(minimum, bool)
+            and isinstance(maximum, (int, float))
+            and not isinstance(maximum, bool)
+            and isinstance(currency, str)
+            and bool(currency.strip())
+        )
 
 
 __all__ = ["JobEnrichmentService"]

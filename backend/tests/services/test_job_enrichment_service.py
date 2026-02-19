@@ -10,6 +10,7 @@ from typing import Any, cast
 import pytest
 
 from src.core.exceptions import BusinessLogicError, RepositoryError
+from src.models.job import Job
 from src.repositories.job import JobRepository
 from src.services.job_enrichment_service import JobEnrichmentService
 
@@ -36,6 +37,8 @@ def make_job(**overrides: Any) -> SimpleNamespace:
         "description_short": None,
         "description_full": None,
         "skills": None,
+        "job_type": None,
+        "salary_range": None,
         "is_active": True,
     }
     data.update(overrides)
@@ -138,9 +141,88 @@ def test_build_enrichment_payload_returns_empty_when_skills_already_present() ->
     service = make_service(repo)
     job = make_job(skills=["Python"], description_full="FastAPI and SQL")
 
-    result = service.build_enrichment_payload(job)
+    result = service.build_enrichment_payload(cast(Job, job))
 
     assert result == {}
+
+
+def test_extract_job_type_from_text_detects_and_normalizes() -> None:
+    repo = FakeJobRepository()
+    service = make_service(repo)
+
+    result = service.extract_job_type_from_text(
+        "Senior Backend Engineer (full-time) with async Python experience."
+    )
+
+    assert result == "Full-Time"
+
+
+def test_extract_salary_range_from_text_parses_explicit_hourly_amount() -> None:
+    repo = FakeJobRepository()
+    service = make_service(repo)
+
+    result = service.extract_salary_range_from_text(
+        "Compensation is $45/hr plus superannuation."
+    )
+
+    assert result == {
+        "min": 45,
+        "max": 45,
+        "currency": "AUD",
+        "period": "hour",
+        "raw": "$45",
+    }
+
+
+def test_extract_salary_range_from_text_parses_explicit_yearly_range() -> None:
+    repo = FakeJobRepository()
+    service = make_service(repo)
+
+    result = service.extract_salary_range_from_text(
+        "Salary: AUD 120000 to 150000 per annum based on experience."
+    )
+
+    assert result == {
+        "min": 120000,
+        "max": 150000,
+        "currency": "AUD",
+        "period": "year",
+        "raw": "AUD 120000 to 150000",
+    }
+
+
+def test_extract_salary_range_from_text_infers_period_when_missing() -> None:
+    repo = FakeJobRepository()
+    service = make_service(repo)
+
+    result = service.extract_salary_range_from_text("Day-rate equivalent: $800 - $1000")
+
+    assert result == {
+        "min": 800,
+        "max": 1000,
+        "currency": "AUD",
+        "period": "day",
+        "raw": "$800 - $1000",
+    }
+
+
+def test_build_enrichment_payload_preserves_existing_job_type_and_salary_range() -> (
+    None
+):
+    repo = FakeJobRepository()
+    service = make_service(repo)
+    job = make_job(
+        skills=None,
+        job_type="Contract",
+        salary_range={"min": 100, "max": 120, "currency": "AUD", "period": "hour"},
+        description_full=(
+            "Full-time role requiring Python and fast api. Pay is $45/hr."
+        ),
+    )
+
+    result = service.build_enrichment_payload(cast(Job, job))
+
+    assert result == {"skills": ["Python"]}
 
 
 @pytest.mark.asyncio
@@ -161,6 +243,54 @@ async def test_enrich_job_updates_only_when_skills_missing() -> None:
     assert untouched is not None
     assert untouched.skills == ["AWS"]
     assert [job_id for job_id, _ in repo.update_calls] == [1]
+
+
+@pytest.mark.asyncio
+async def test_enrich_job_updates_missing_fields_alongside_skills() -> None:
+    repo = FakeJobRepository(
+        jobs={
+            1: make_job(
+                id=1,
+                title="Backend Engineer - Full-Time",
+                skills=None,
+                job_type=None,
+                salary_range=None,
+                description_full=(
+                    "We need Python and fast api experience. Compensation is $45/hr."
+                ),
+            )
+        }
+    )
+    service = make_service(repo)
+
+    updated = await service.enrich_job(1)
+
+    assert updated is not None
+    assert updated.skills == ["Python", "FastAPI"]
+    assert updated.job_type == "Full-Time"
+    assert updated.salary_range == {
+        "min": 45,
+        "max": 45,
+        "currency": "AUD",
+        "period": "hour",
+        "raw": "$45",
+    }
+    assert repo.update_calls == [
+        (
+            1,
+            {
+                "skills": ["Python", "FastAPI"],
+                "job_type": "Full-Time",
+                "salary_range": {
+                    "min": 45,
+                    "max": 45,
+                    "currency": "AUD",
+                    "period": "hour",
+                    "raw": "$45",
+                },
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio
