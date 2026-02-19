@@ -1,0 +1,287 @@
+"""Business logic service for LLM-powered job/profile relevance scoring."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any
+
+from loguru import logger
+
+from src.ai.llm_client import BaseLLMClient, get_llm_client
+from src.ai.prompts import job_scoring_prompt
+from src.core.exceptions import BusinessLogicError, NotFoundError, RepositoryError
+from src.repositories.job import JobRepository
+from src.repositories.match_score import MatchScoreRepository
+from src.repositories.profile import ProfileRepository
+from src.schemas.job import JobResponse
+from src.schemas.match_score import MatchScoreResponse
+from src.schemas.profile import ProfileResponse
+
+MAX_BATCH_LIMIT = 1000
+
+
+class MatchService:
+    """Service layer for scoring job relevance against a candidate profile."""
+
+    def __init__(
+        self,
+        job_repo: JobRepository,
+        profile_repo: ProfileRepository,
+        match_repo: MatchScoreRepository,
+        llm_client: BaseLLMClient | None = None,
+    ) -> None:
+        """Initialize MatchService.
+
+        Args:
+            job_repo: Repository used for job read operations.
+            profile_repo: Repository used for profile read operations.
+            match_repo: Repository used for match score upsert operations.
+            llm_client: Optional LLM client override for tests.
+        """
+        self.job_repo = job_repo
+        self.profile_repo = profile_repo
+        self.match_repo = match_repo
+        self.llm_client = llm_client or get_llm_client()
+
+    async def score_job(self, job_id: int, profile_id: int) -> MatchScoreResponse:
+        """Score one job against one profile and persist the result.
+
+        Args:
+            job_id: Job identifier to score.
+            profile_id: Profile identifier used as scoring context.
+
+        Returns:
+            Persisted match score response.
+
+        Raises:
+            NotFoundError: If the job or profile does not exist.
+            BusinessLogicError: If repository, LLM, or validation operations fail.
+        """
+        log = logger.bind(
+            service=self.__class__.__name__,
+            operation="score_job",
+            job_id=job_id,
+            profile_id=profile_id,
+        )
+        log.info("Starting job score")
+
+        try:
+            job = await self.job_repo.get_by_id(job_id)
+            profile = await self.profile_repo.get_by_id(profile_id)
+        except RepositoryError as exc:
+            log.bind(error=str(exc)).error("Failed to fetch job/profile for scoring")
+            raise BusinessLogicError(
+                "Failed to fetch data required for scoring."
+            ) from exc
+
+        if job is None:
+            log.warning("Job not found for scoring")
+            raise NotFoundError(f"Job {job_id} not found.")
+        if profile is None:
+            log.warning("Profile not found for scoring")
+            raise NotFoundError(f"Profile {profile_id} not found.")
+
+        try:
+            job_data = JobResponse.model_validate(job).model_dump(mode="json")
+            profile_data = ProfileResponse.model_validate(profile).model_dump(
+                mode="json"
+            )
+            prompt = job_scoring_prompt(job_data=job_data, profile_data=profile_data)
+            llm_payload = await self.llm_client.generate_json(prompt, temperature=0.3)
+        except (TypeError, ValueError, RuntimeError) as exc:
+            log.bind(error=str(exc)).error("Failed to generate scoring output from LLM")
+            raise BusinessLogicError(
+                "Failed to generate score from LLM output."
+            ) from exc
+        except Exception as exc:  # pragma: no cover - defensive wrapper
+            log.bind(error=str(exc)).error("Unexpected LLM scoring failure")
+            raise BusinessLogicError("Unexpected error while scoring job.") from exc
+
+        try:
+            score = self._validate_score(llm_payload)
+            explanation = self._validate_explanation(llm_payload)
+            category = self._determine_category(score)
+            record = await self.match_repo.upsert_by_job_and_profile(
+                job_id=job_id,
+                profile_id=profile_id,
+                payload={
+                    "relevance_score": score,
+                    "category": category,
+                    "explanation": explanation,
+                    "scored_at": datetime.now(timezone.utc),
+                },
+            )
+        except RepositoryError as exc:
+            log.bind(error=str(exc)).error("Failed to persist match score")
+            raise BusinessLogicError("Failed to persist match score.") from exc
+        except ValueError as exc:
+            log.bind(error=str(exc), llm_payload=llm_payload).error(
+                "Invalid LLM score payload"
+            )
+            raise BusinessLogicError("Invalid score payload returned by LLM.") from exc
+
+        log.bind(score=score, category=category).info("Completed job score")
+        return MatchScoreResponse.model_validate(record)
+
+    async def score_all_unscored_jobs(self, profile_id: int) -> int:
+        """Score all active jobs that do not yet have a match score.
+
+        Args:
+            profile_id: Profile identifier used as scoring context.
+
+        Returns:
+            Number of newly scored jobs.
+
+        Raises:
+            NotFoundError: If the profile does not exist.
+            BusinessLogicError: If active jobs cannot be fetched.
+        """
+        log = logger.bind(
+            service=self.__class__.__name__,
+            operation="score_all_unscored_jobs",
+            profile_id=profile_id,
+        )
+        log.info("Starting batch scoring")
+
+        try:
+            profile = await self.profile_repo.get_by_id(profile_id)
+        except RepositoryError as exc:
+            log.bind(error=str(exc)).error("Failed to fetch profile for batch scoring")
+            raise BusinessLogicError(
+                "Failed to fetch profile for batch scoring."
+            ) from exc
+
+        if profile is None:
+            log.warning("Profile not found for batch scoring")
+            raise NotFoundError(f"Profile {profile_id} not found.")
+
+        scored_count = 0
+        skip = 0
+
+        while True:
+            try:
+                jobs = await self.job_repo.get_all(
+                    skip=skip,
+                    limit=MAX_BATCH_LIMIT,
+                    is_active=True,
+                )
+            except (RepositoryError, ValueError) as exc:
+                log.bind(error=str(exc), skip=skip).error(
+                    "Failed to fetch active jobs for batch scoring"
+                )
+                raise BusinessLogicError(
+                    "Failed to fetch active jobs for scoring."
+                ) from exc
+
+            if not jobs:
+                break
+
+            for job in jobs:
+                job_id = getattr(job, "id", None)
+                if not isinstance(job_id, int):
+                    logger.bind(
+                        service=self.__class__.__name__,
+                        operation="score_all_unscored_jobs",
+                        profile_id=profile_id,
+                    ).warning("Skipping active job with invalid id")
+                    continue
+
+                try:
+                    existing = await self.match_repo.get_by_job_and_profile(
+                        job_id=job_id,
+                        profile_id=profile_id,
+                    )
+                except RepositoryError as exc:
+                    logger.bind(
+                        service=self.__class__.__name__,
+                        operation="score_all_unscored_jobs",
+                        profile_id=profile_id,
+                        job_id=job_id,
+                        error=str(exc),
+                    ).error("Failed to check existing score; skipping job")
+                    continue
+
+                if existing is not None:
+                    logger.bind(
+                        service=self.__class__.__name__,
+                        operation="score_all_unscored_jobs",
+                        profile_id=profile_id,
+                        job_id=job_id,
+                    ).debug("Skipping already scored job")
+                    continue
+
+                try:
+                    await self.score_job(job_id=job_id, profile_id=profile_id)
+                    scored_count += 1
+                except (BusinessLogicError, NotFoundError) as exc:
+                    logger.bind(
+                        service=self.__class__.__name__,
+                        operation="score_all_unscored_jobs",
+                        profile_id=profile_id,
+                        job_id=job_id,
+                        error=str(exc),
+                    ).error("Failed to score job in batch")
+                    continue
+
+            if len(jobs) < MAX_BATCH_LIMIT:
+                break
+            skip += len(jobs)
+
+        log.bind(scored_count=scored_count).info("Completed batch scoring")
+        return scored_count
+
+    def _determine_category(self, score: int) -> str:
+        """Map numeric relevance score into canonical category label.
+
+        Args:
+            score: Integer relevance score from 0 to 100.
+
+        Returns:
+            Matching category label for the score range.
+        """
+        if score >= 90:
+            return "Most Relevant"
+        if score >= 70:
+            return "Relevant"
+        if score >= 50:
+            return "Somewhat Relevant"
+        return "Not Relevant"
+
+    def _validate_score(self, payload: dict[str, Any]) -> int:
+        """Validate score field in LLM response payload.
+
+        Args:
+            payload: Parsed JSON payload returned by LLM client.
+
+        Returns:
+            Validated integer score.
+
+        Raises:
+            ValueError: If score is missing or outside 0-100.
+        """
+        score = payload.get("score")
+        if isinstance(score, bool) or not isinstance(score, int):
+            raise ValueError("score must be an integer between 0 and 100")
+        if score < 0 or score > 100:
+            raise ValueError("score must be an integer between 0 and 100")
+        return score
+
+    def _validate_explanation(self, payload: dict[str, Any]) -> str:
+        """Validate explanation field in LLM response payload.
+
+        Args:
+            payload: Parsed JSON payload returned by LLM client.
+
+        Returns:
+            Trimmed explanation string.
+
+        Raises:
+            ValueError: If explanation is missing or blank.
+        """
+        explanation = payload.get("explanation")
+        if not isinstance(explanation, str) or not explanation.strip():
+            raise ValueError("explanation must be a non-empty string")
+        return explanation.strip()
+
+
+__all__ = ["MatchService"]
