@@ -6,14 +6,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import RepositoryError
 from src.core.metrics import db_query_timer
 from src.models.job import Job
-from src.models.match_score import MatchScore
+from src.models.match_score import ALLOWED_MATCH_CATEGORIES, MatchScore
 from src.repositories.base import BaseRepository
 
 PROTECTED_CREATE_FIELDS = frozenset({"id", "created_at", "updated_at"})
@@ -474,6 +474,44 @@ class MatchScoreRepository(BaseRepository[MatchScore]):
         except SQLAlchemyError as exc:
             log.bind(error=str(exc)).error("Failed to fetch jobs by relevance score")
             raise RepositoryError("Failed to fetch jobs by relevance score.") from exc
+
+    async def count_by_category(self, profile_id: int) -> dict[str, int]:
+        """Count profile match scores grouped by category.
+
+        Args:
+            profile_id: Profile primary key used for grouping.
+
+        Returns:
+            Category-to-count mapping including zeroes for missing categories.
+
+        Raises:
+            RepositoryError: If database query fails.
+        """
+        log = logger.bind(
+            repository=self.__class__.__name__,
+            operation="count_by_category",
+            profile_id=profile_id,
+        )
+        log.debug("Counting match scores by category")
+
+        category_counts = {category: 0 for category in ALLOWED_MATCH_CATEGORIES}
+
+        try:
+            with db_query_timer(query_type="match_score_count_by_category"):
+                result = await self.db.execute(
+                    select(MatchScore.category, func.count(MatchScore.id))
+                    .where(MatchScore.profile_id == profile_id)
+                    .group_by(MatchScore.category)
+                )
+
+            for category, total in result.all():
+                if category in category_counts:
+                    category_counts[category] = int(total)
+
+            return category_counts
+        except SQLAlchemyError as exc:
+            log.bind(error=str(exc)).error("Failed to count match scores by category")
+            raise RepositoryError("Failed to count match scores by category.") from exc
 
     def _merge_missing_fields(
         self,

@@ -259,3 +259,100 @@ def test_run_score_single_job_falls_back_to_first_profile(
     assert result["status"] == "success"
     assert result["profile_id"] == 13
     assert result["score"]["relevance_score"] == 80
+
+
+def test_run_score_all_unscored_jobs_updates_category_gauges(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Batch helper updates score category gauges after successful scoring."""
+
+    class DummyAsyncSession:
+        pass
+
+    class DummySessionContext:
+        async def __aenter__(self) -> DummyAsyncSession:
+            return DummyAsyncSession()
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            del exc_type, exc, tb
+
+    class FakeJobRepository:
+        def __init__(self, db_session: DummyAsyncSession) -> None:
+            self.db_session = db_session
+
+    class FakeProfileRepository:
+        def __init__(self, db_session: DummyAsyncSession) -> None:
+            self.db_session = db_session
+
+        async def get_first(self) -> Any:
+            return SimpleNamespace(id=21)
+
+    class FakeMatchScoreRepository:
+        def __init__(self, db_session: DummyAsyncSession) -> None:
+            self.db_session = db_session
+
+        async def count_by_category(self, profile_id: int) -> dict[str, int]:
+            assert profile_id == 21
+            return {
+                "Most Relevant": 2,
+                "Relevant": 1,
+            }
+
+    class FakeJobEnrichmentRepository:
+        def __init__(self, db_session: DummyAsyncSession) -> None:
+            self.db_session = db_session
+
+    class FakeMatchService:
+        def __init__(
+            self,
+            job_repo: Any,
+            profile_repo: Any,
+            match_repo: Any,
+            enrichment_repo: Any,
+        ) -> None:
+            self.job_repo = job_repo
+            self.profile_repo = profile_repo
+            self.match_repo = match_repo
+            self.enrichment_repo = enrichment_repo
+
+        async def score_all_unscored_jobs(self, profile_id: int) -> int:
+            assert profile_id == 21
+            return 3
+
+    gauge_calls: list[tuple[str, int]] = []
+
+    def fake_set_jobs_by_score_category(category: str, total: int) -> None:
+        gauge_calls.append((category, total))
+
+    monkeypatch.setattr(scoring_tasks, "get_session", lambda: DummySessionContext())
+    monkeypatch.setattr(scoring_tasks, "JobRepository", FakeJobRepository)
+    monkeypatch.setattr(scoring_tasks, "ProfileRepository", FakeProfileRepository)
+    monkeypatch.setattr(scoring_tasks, "MatchScoreRepository", FakeMatchScoreRepository)
+    monkeypatch.setattr(
+        scoring_tasks,
+        "JobEnrichmentRepository",
+        FakeJobEnrichmentRepository,
+    )
+    monkeypatch.setattr(scoring_tasks, "MatchService", FakeMatchService)
+    monkeypatch.setattr(
+        scoring_tasks,
+        "set_jobs_by_score_category",
+        fake_set_jobs_by_score_category,
+    )
+
+    result = asyncio.run(
+        scoring_tasks._run_score_all_unscored_jobs(
+            platform="linkedin",
+            task_id="task-123",
+        )
+    )
+
+    assert result["status"] == "success"
+    assert result["profile_id"] == 21
+    assert result["scored"] == 3
+    assert gauge_calls == [
+        ("Most Relevant", 2),
+        ("Relevant", 1),
+        ("Somewhat Relevant", 0),
+        ("Not Relevant", 0),
+    ]

@@ -16,9 +16,11 @@ from src.core.metrics import (
     increment_scoring_errors,
     increment_scoring_runs,
     observe_scoring_duration,
+    set_jobs_by_score_category,
 )
 from src.celery_app import celery_app
 from src.db.session import get_session
+from src.models.match_score import ALLOWED_MATCH_CATEGORIES
 from src.repositories.job import JobRepository
 from src.repositories.job_enrichment import JobEnrichmentRepository
 from src.repositories.match_score import MatchScoreRepository
@@ -135,6 +137,33 @@ def _record_scoring_result_metrics(
         )
 
 
+def _record_jobs_by_category_metrics(
+    category_counts: dict[str, int],
+    task_id: str | None,
+) -> None:
+    """Record jobs-by-category gauge values after successful scoring.
+
+    Args:
+        category_counts: Grouped score totals keyed by category.
+        task_id: Optional Celery task identifier.
+
+    Returns:
+        None.
+    """
+    for category in ALLOWED_MATCH_CATEGORIES:
+        total = int(category_counts.get(category, 0))
+        try:
+            set_jobs_by_score_category(category=category, total=total)
+        except ValueError as exc:
+            logger.warning(
+                "Skipped jobs-by-category gauge due to invalid values",
+                category=category,
+                total=total,
+                task_id=task_id,
+                error=str(exc),
+            )
+
+
 async def _run_score_all_unscored_jobs(
     platform: str,
     task_id: str | None,
@@ -185,6 +214,22 @@ async def _run_score_all_unscored_jobs(
             progress="started",
         )
         scored = await match_service.score_all_unscored_jobs(profile_id=profile.id)
+        try:
+            category_counts = await match_score_repository.count_by_category(
+                profile_id=profile.id
+            )
+            _record_jobs_by_category_metrics(
+                category_counts=category_counts,
+                task_id=task_id,
+            )
+        except RepositoryError as exc:
+            logger.warning(
+                "Failed to refresh jobs-by-category gauges after scoring",
+                platform=platform,
+                profile_id=profile.id,
+                task_id=task_id,
+                error=str(exc),
+            )
         failed = 0
         total = scored + failed
         result = {

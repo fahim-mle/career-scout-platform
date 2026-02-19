@@ -389,7 +389,27 @@ def make_service(
 
 
 @pytest.mark.asyncio
-async def test_score_job_success_creates_score() -> None:
+async def test_score_job_success_creates_score(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metric_calls: list[tuple[str, int]] = []
+    metric_durations: list[float] = []
+
+    def fake_increment_scoring_llm_calls(status: str, count: int = 1) -> None:
+        metric_calls.append((status, count))
+
+    def fake_observe_scoring_llm_duration(duration_seconds: float) -> None:
+        metric_durations.append(duration_seconds)
+
+    monkeypatch.setattr(
+        "src.services.match_service.increment_scoring_llm_calls",
+        fake_increment_scoring_llm_calls,
+    )
+    monkeypatch.setattr(
+        "src.services.match_service.observe_scoring_llm_duration",
+        fake_observe_scoring_llm_duration,
+    )
+
     job_repo = FakeJobRepository(jobs={1: make_job(id=1)})
     profile_repo = FakeProfileRepository(profiles={1: make_profile(id=1)})
     match_repo = FakeMatchScoreRepository()
@@ -415,6 +435,46 @@ async def test_score_job_success_creates_score() -> None:
         "Strong skills alignment with minor domain gaps."
     )
     assert llm.generate_json_calls[0][1] == 0.3
+    assert metric_calls == [("success", 1)]
+    assert len(metric_durations) == 1
+    assert metric_durations[0] >= 0
+
+
+@pytest.mark.asyncio
+async def test_score_job_records_failure_metrics_when_llm_call_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metric_calls: list[tuple[str, int]] = []
+    metric_durations: list[float] = []
+
+    def fake_increment_scoring_llm_calls(status: str, count: int = 1) -> None:
+        metric_calls.append((status, count))
+
+    def fake_observe_scoring_llm_duration(duration_seconds: float) -> None:
+        metric_durations.append(duration_seconds)
+
+    monkeypatch.setattr(
+        "src.services.match_service.increment_scoring_llm_calls",
+        fake_increment_scoring_llm_calls,
+    )
+    monkeypatch.setattr(
+        "src.services.match_service.observe_scoring_llm_duration",
+        fake_observe_scoring_llm_duration,
+    )
+
+    service = make_service(
+        FakeJobRepository(jobs={1: make_job(id=1)}),
+        FakeProfileRepository(profiles={1: make_profile(id=1)}),
+        FakeMatchScoreRepository(),
+        FakeLLMClient(responses=[RuntimeError("llm unavailable")]),
+    )
+
+    with pytest.raises(BusinessLogicError, match="Failed to generate score from LLM"):
+        await service.score_job(job_id=1, profile_id=1)
+
+    assert metric_calls == [("failure", 1)]
+    assert len(metric_durations) == 1
+    assert metric_durations[0] >= 0
 
 
 @pytest.mark.asyncio

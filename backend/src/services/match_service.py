@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -10,6 +11,7 @@ from loguru import logger
 from src.ai.llm_client import BaseLLMClient, get_llm_client
 from src.ai.prompts import job_scoring_prompt
 from src.core.exceptions import BusinessLogicError, NotFoundError, RepositoryError
+from src.core.metrics import increment_scoring_llm_calls, observe_scoring_llm_duration
 from src.repositories.job import JobRepository
 from src.repositories.job_enrichment import JobEnrichmentRepository
 from src.repositories.match_score import MatchScoreRepository
@@ -105,7 +107,23 @@ class MatchService:
                 mode="json"
             )
             prompt = job_scoring_prompt(job_data=job_data, profile_data=profile_data)
-            llm_payload = await self.llm_client.generate_json(prompt, temperature=0.3)
+            llm_started_at = time.perf_counter()
+            try:
+                llm_payload = await self.llm_client.generate_json(
+                    prompt, temperature=0.3
+                )
+                self._record_scoring_llm_metrics(
+                    status="success",
+                    duration_seconds=time.perf_counter() - llm_started_at,
+                    log=log,
+                )
+            except Exception:
+                self._record_scoring_llm_metrics(
+                    status="failure",
+                    duration_seconds=time.perf_counter() - llm_started_at,
+                    log=log,
+                )
+                raise
         except (TypeError, ValueError, RuntimeError) as exc:
             log.bind(error=str(exc)).error("Failed to generate scoring output from LLM")
             raise BusinessLogicError(
@@ -140,6 +158,32 @@ class MatchService:
 
         log.bind(score=score, category=category).info("Completed job score")
         return MatchScoreResponse.model_validate(record)
+
+    def _record_scoring_llm_metrics(
+        self,
+        status: str,
+        duration_seconds: float,
+        log: Any,
+    ) -> None:
+        """Record LLM scoring metrics while preserving scoring flow.
+
+        Args:
+            status: LLM call status label.
+            duration_seconds: LLM call duration.
+            log: Bound logger carrying request context.
+
+        Returns:
+            None.
+        """
+        try:
+            increment_scoring_llm_calls(status=status)
+            observe_scoring_llm_duration(duration_seconds=duration_seconds)
+        except ValueError as exc:
+            log.bind(
+                status=status,
+                duration_seconds=duration_seconds,
+                error=str(exc),
+            ).warning("Skipped scoring LLM metrics due to invalid values")
 
     async def score_all_unscored_jobs(self, profile_id: int) -> int:
         """Score all active jobs that do not yet have a match score.
