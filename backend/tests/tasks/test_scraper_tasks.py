@@ -221,3 +221,85 @@ def test_build_job_update_payload_empty_when_no_new_values() -> None:
 
     result = scraper_tasks._build_job_update_payload(existing, scraped)
     assert result == {}
+
+
+def test_scrape_linkedin_jobs_triggers_enrichment_when_job_ids_exist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scrape task enqueues enrichment when created/updated ids are returned."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def fake_scrape_and_persist(**_kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "platform": "linkedin",
+            "query": "python",
+            "location": "remote",
+            "scraped": 2,
+            "created": 1,
+            "updated": 1,
+            "duplicates": 0,
+            "failed": 0,
+            "enrichment_job_ids": [11, 22],
+        }
+
+    enqueue_calls: list[dict[str, Any]] = []
+
+    def fake_send_task(name: str, kwargs: dict[str, Any], countdown: int) -> None:
+        enqueue_calls.append({"name": name, "kwargs": kwargs, "countdown": countdown})
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_linkedin_scrape_and_persist",
+        fake_scrape_and_persist,
+    )
+    monkeypatch.setattr(scraper_tasks.celery_app, "send_task", fake_send_task)
+
+    result = SCRAPE_TASK_RUN(task, query="python", location="remote", limit=5)
+
+    assert result["status"] == "success"
+    assert len(enqueue_calls) == 1
+    enqueue_call = enqueue_calls[0]
+    assert enqueue_call["name"] == scraper_tasks.ENRICHMENT_TASK_NAME
+    assert enqueue_call["kwargs"] == {"platform": "linkedin", "job_ids": [11, 22]}
+    assert enqueue_call["countdown"] == 5
+
+
+def test_scrape_linkedin_jobs_does_not_trigger_enrichment_without_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scrape task skips enrichment enqueue when no candidate ids are present."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def fake_scrape_and_persist(**_kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "platform": "linkedin",
+            "query": "python",
+            "location": "remote",
+            "scraped": 1,
+            "created": 0,
+            "updated": 0,
+            "duplicates": 1,
+            "failed": 0,
+            "enrichment_job_ids": [],
+        }
+
+    enqueue_calls: list[dict[str, Any]] = []
+
+    def fake_send_task(name: str, kwargs: dict[str, Any], countdown: int) -> None:
+        enqueue_calls.append({"name": name, "kwargs": kwargs, "countdown": countdown})
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_linkedin_scrape_and_persist",
+        fake_scrape_and_persist,
+    )
+    monkeypatch.setattr(scraper_tasks.celery_app, "send_task", fake_send_task)
+
+    result = SCRAPE_TASK_RUN(task, query="python", location="remote", limit=5)
+
+    assert result["status"] == "success"
+    assert enqueue_calls == []

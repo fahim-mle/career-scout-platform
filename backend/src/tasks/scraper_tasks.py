@@ -46,6 +46,7 @@ LINKEDIN_PROFILE_CONFIG_PATH = (
 )
 MAX_PROFILE_RUNS_PER_TASK = 25
 LINKEDIN_PLATFORM = "linkedin"
+ENRICHMENT_TASK_NAME = "src.tasks.enrichment_tasks.enrich_unstructured_jobs_task"
 
 
 def _record_scraper_result_metrics(
@@ -193,6 +194,7 @@ async def _run_linkedin_scrape_and_persist(
     updated_count = 0
     duplicate_count = 0
     failed_count = 0
+    enrichment_job_ids: set[int] = set()
 
     async with get_session() as db_session:
         job_repository = JobRepository(db_session)
@@ -218,14 +220,19 @@ async def _run_linkedin_scrape_and_persist(
                         scraped_payload=job_payload,
                     )
                     if update_payload:
-                        await job_repository.update(existing_job.id, update_payload)
+                        updated_job = await job_repository.update(
+                            existing_job.id, update_payload
+                        )
+                        if updated_job is not None:
+                            enrichment_job_ids.add(updated_job.id)
                         updated_count += 1
                         continue
 
                     duplicate_count += 1
                     continue
 
-                await job_repository.create(job_payload)
+                created_job = await job_repository.create(job_payload)
+                enrichment_job_ids.add(created_job.id)
                 created_count += 1
             except DuplicateJobError:
                 duplicate_count += 1
@@ -257,11 +264,59 @@ async def _run_linkedin_scrape_and_persist(
         "updated": updated_count,
         "duplicates": duplicate_count,
         "failed": failed_count,
+        "enrichment_job_ids": sorted(enrichment_job_ids),
     }
     logger.info(
         "Completed LinkedIn scrape orchestration", task_id=task_id, result=result
     )
     return result
+
+
+def _enqueue_enrichment_task(
+    *,
+    platform: str,
+    job_ids: list[int],
+    task_id: str | None,
+) -> None:
+    """Queue enrichment task for scraped jobs when ids are available.
+
+    Args:
+        platform: Source platform for enrichment context.
+        job_ids: Job identifiers eligible for enrichment.
+        task_id: Parent scraper task identifier.
+
+    Returns:
+        None.
+    """
+    unique_job_ids = sorted(
+        {
+            job_id
+            for job_id in job_ids
+            if isinstance(job_id, int) and not isinstance(job_id, bool) and job_id > 0
+        }
+    )
+    if not unique_job_ids:
+        return
+
+    try:
+        celery_app.send_task(
+            ENRICHMENT_TASK_NAME,
+            kwargs={"platform": platform, "job_ids": unique_job_ids},
+            countdown=5,
+        )
+        logger.info(
+            "Queued enrichment task for scraped jobs",
+            platform=platform,
+            job_ids_count=len(unique_job_ids),
+            task_id=task_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to queue enrichment task after scrape",
+            platform=platform,
+            task_id=task_id,
+            error=str(exc),
+        )
 
 
 class DatabaseTask(Task):
@@ -506,6 +561,7 @@ def scrape_linkedin_profile_set(self: DatabaseTask) -> dict[str, Any]:
             "failed": 0,
         }
         per_profile: list[dict[str, Any]] = []
+        enrichment_job_ids: list[int] = []
 
         for profile in profiles:
             result = asyncio.run(
@@ -530,6 +586,9 @@ def scrape_linkedin_profile_set(self: DatabaseTask) -> dict[str, Any]:
             totals["updated"] += int(result.get("updated", 0))
             totals["duplicates"] += int(result.get("duplicates", 0))
             totals["failed"] += int(result.get("failed", 0))
+            enrichment_job_ids.extend(
+                [job_id for job_id in result.get("enrichment_job_ids", [])]
+            )
 
         _record_scraper_result_metrics(
             platform=LINKEDIN_PLATFORM,
@@ -544,12 +603,18 @@ def scrape_linkedin_profile_set(self: DatabaseTask) -> dict[str, Any]:
         )
 
         run_status = "success"
+        _enqueue_enrichment_task(
+            platform=LINKEDIN_PLATFORM,
+            job_ids=enrichment_job_ids,
+            task_id=self.request.id,
+        )
         return {
             "status": "success",
             "platform": LINKEDIN_PLATFORM,
             "profiles_processed": len(per_profile),
             "totals": totals,
             "profiles": per_profile,
+            "enrichment_job_ids": sorted({job_id for job_id in enrichment_job_ids}),
         }
     except Exception as exc:
         if _is_non_retryable_error(exc):
@@ -664,6 +729,11 @@ def scrape_linkedin_jobs(
                 + int(result.get("duplicates", 0))
                 + int(result.get("updated", 0))
             ),
+            task_id=self.request.id,
+        )
+        _enqueue_enrichment_task(
+            platform=LINKEDIN_PLATFORM,
+            job_ids=[job_id for job_id in result.get("enrichment_job_ids", [])],
             task_id=self.request.id,
         )
         run_status = "success"
