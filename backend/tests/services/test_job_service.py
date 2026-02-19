@@ -137,6 +137,7 @@ class FakeJobEnrichmentRepository:
 
     enrichments: list[SimpleNamespace] = field(default_factory=list)
     fail_list_by_job_ids: bool = False
+    fail_get_latest_by_job_id: bool = False
 
     async def list_by_job_ids(self, job_ids: list[int]) -> list[SimpleNamespace]:
         """Return enrichments matching requested job ids.
@@ -154,6 +155,27 @@ class FakeJobEnrichmentRepository:
             raise RepositoryError("repo list_by_job_ids failed")
         job_id_set = set(job_ids)
         return [item for item in self.enrichments if item.job_id in job_id_set]
+
+    async def get_latest_by_job_id(self, job_id: int) -> SimpleNamespace | None:
+        """Return latest enrichment row for one job id.
+
+        Args:
+            job_id: Raw job id to search.
+
+        Returns:
+            Latest enrichment row when present.
+
+        Raises:
+            RepositoryError: If configured to fail.
+        """
+        if self.fail_get_latest_by_job_id:
+            raise RepositoryError("repo get_latest_by_job_id failed")
+
+        candidates = [item for item in self.enrichments if item.job_id == job_id]
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: (item.enriched_at, item.id), reverse=True)
+        return candidates[0]
 
 
 def make_service(
@@ -186,6 +208,14 @@ async def test_get_job_raises_not_found_when_missing() -> None:
 
     with pytest.raises(NotFoundError, match="not found"):
         await service.get_job(999)
+
+
+@pytest.mark.asyncio
+async def test_get_raw_job_raises_not_found_when_missing() -> None:
+    service = make_service(FakeJobRepository())
+
+    with pytest.raises(NotFoundError, match="not found"):
+        await service.get_raw_job(999)
 
 
 @pytest.mark.asyncio
@@ -393,3 +423,68 @@ async def test_list_enriched_jobs_converts_enrichment_repo_error() -> None:
 
     with pytest.raises(BusinessLogicError, match="Failed to list jobs"):
         await service.list_enriched_jobs()
+
+
+@pytest.mark.asyncio
+async def test_get_enriched_job_merges_latest_enrichment_values() -> None:
+    repo = FakeJobRepository(jobs={1: make_job(id=1, external_id="job-1")})
+    enrichment_repo = FakeJobEnrichmentRepository(
+        enrichments=[
+            make_enrichment(
+                id=5,
+                job_id=1,
+                extractor_version="heuristic-v2",
+                status="completed",
+                skills=["Python", "FastAPI"],
+                job_type="Contract",
+                salary_min=900,
+                salary_max=1100,
+                salary_period="day",
+                enriched_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            )
+        ]
+    )
+    service = make_service(repo, enrichment_repo)
+
+    result = await service.get_enriched_job(1)
+
+    assert result.id == 1
+    assert result.skills == ["Python", "FastAPI"]
+    assert result.job_type == "Contract"
+    assert result.salary_range == {
+        "min": 900,
+        "max": 1100,
+        "currency": "AUD",
+        "period": "day",
+        "raw": "$120k-$160k AUD",
+    }
+    assert result.enrichment_status == "completed"
+    assert result.enrichment_version == "heuristic-v2"
+    assert result.enrichment_updated_at == datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_get_enriched_job_returns_raw_fields_without_enrichment() -> None:
+    repo = FakeJobRepository(jobs={1: make_job(id=1, external_id="job-1")})
+    enrichment_repo = FakeJobEnrichmentRepository(enrichments=[])
+    service = make_service(repo, enrichment_repo)
+
+    result = await service.get_enriched_job(1)
+
+    assert result.id == 1
+    assert result.skills is None
+    assert result.job_type is None
+    assert result.salary_range is None
+    assert result.enrichment_status is None
+    assert result.enrichment_version is None
+    assert result.enrichment_updated_at is None
+
+
+@pytest.mark.asyncio
+async def test_get_enriched_job_converts_enrichment_repo_error() -> None:
+    repo = FakeJobRepository(jobs={1: make_job(id=1)})
+    enrichment_repo = FakeJobEnrichmentRepository(fail_get_latest_by_job_id=True)
+    service = make_service(repo, enrichment_repo)
+
+    with pytest.raises(BusinessLogicError, match="Failed to fetch enriched job"):
+        await service.get_enriched_job(1)

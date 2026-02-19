@@ -332,7 +332,10 @@ class TestJobsAPI:
         response = await client.get(f"/api/v1/jobs/{job_id}")
 
         assert response.status_code == 200
-        assert response.json()["id"] == job_id
+        body = response.json()
+        assert body["id"] == job_id
+        assert_enriched_job_shape(body)
+        assert body["enrichment_status"] is None
 
     @pytest.mark.asyncio
     async def test_get_job_by_id_not_found(self, client: AsyncClient) -> None:
@@ -346,7 +349,7 @@ class TestJobsAPI:
         self, client: AsyncClient
     ) -> None:
         class BrokenGetService:
-            async def get_job(self, job_id: int) -> dict[str, Any]:
+            async def get_enriched_job(self, job_id: int) -> dict[str, Any]:
                 raise BusinessLogicError("service failure")
 
         app.dependency_overrides[get_job_service] = lambda: BrokenGetService()
@@ -355,6 +358,32 @@ class TestJobsAPI:
 
         assert response.status_code == 400
         assert "service failure" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_get_scraped_raw_job_by_id_success(self, client: AsyncClient) -> None:
+        create_response = await client.post(
+            "/api/v1/jobs", json=build_job_payload("api-raw-get-1")
+        )
+        job_id = create_response.json()["id"]
+
+        response = await client.get(f"/api/v1/scraped_raw_jobs/{job_id}")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["id"] == job_id
+        assert body["external_id"] == "api-raw-get-1"
+        assert "enrichment_status" not in body
+        assert "enrichment_version" not in body
+        assert "enrichment_updated_at" not in body
+
+    @pytest.mark.asyncio
+    async def test_get_scraped_raw_job_by_id_not_found(
+        self, client: AsyncClient
+    ) -> None:
+        response = await client.get("/api/v1/scraped_raw_jobs/999999")
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
 
     @pytest.mark.asyncio
     async def test_create_job_duplicate_conflict(self, client: AsyncClient) -> None:

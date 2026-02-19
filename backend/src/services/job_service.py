@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -54,7 +55,7 @@ class JobService:
         self.enrichment_repo = enrichment_repo
 
     async def get_job(self, job_id: int) -> JobResponse:
-        """Get one job by identifier.
+        """Get one raw job by identifier.
 
         Args:
             job_id: Database primary key for the job.
@@ -66,23 +67,79 @@ class JobService:
             NotFoundError: If the job does not exist.
             BusinessLogicError: If repository access fails.
         """
+        return await self.get_raw_job(job_id)
+
+    async def get_raw_job(self, job_id: int) -> RawJobResponse:
+        """Get one raw job by identifier.
+
+        Args:
+            job_id: Database primary key for the job.
+
+        Returns:
+            Serialized raw job response.
+
+        Raises:
+            NotFoundError: If the job does not exist.
+            BusinessLogicError: If repository access fails.
+        """
         log = logger.bind(
-            service=self.__class__.__name__, operation="get_job", job_id=job_id
+            service=self.__class__.__name__, operation="get_raw_job", job_id=job_id
         )
-        log.info("Fetching job")
+        log.info("Fetching raw job")
 
         try:
             job = await self.repo.get_by_id(job_id)
         except RepositoryError as exc:
-            log.bind(error=str(exc)).error("Repository error while fetching job")
+            log.bind(error=str(exc)).error("Repository error while fetching raw job")
             raise BusinessLogicError("Failed to fetch job.") from exc
 
         if job is None:
-            log.warning("Job not found")
+            log.warning("Raw job not found")
             raise NotFoundError(f"Job {job_id} not found.")
 
-        log.info("Fetched job")
-        return JobResponse.model_validate(job)
+        log.info("Fetched raw job")
+        return RawJobResponse.model_validate(job)
+
+    async def get_enriched_job(self, job_id: int) -> EnrichedJobResponse:
+        """Get one job enriched with latest processed metadata.
+
+        Args:
+            job_id: Database primary key for the raw job.
+
+        Returns:
+            Serialized enriched job response.
+
+        Raises:
+            NotFoundError: If the raw job does not exist.
+            BusinessLogicError: If repository access fails.
+        """
+        log = logger.bind(
+            service=self.__class__.__name__,
+            operation="get_enriched_job",
+            job_id=job_id,
+        )
+        log.info("Fetching enriched job")
+
+        raw_job = await self.get_raw_job(job_id)
+
+        if self.enrichment_repo is None:
+            log.warning(
+                "Enrichment repository unavailable; returning empty enrichment data"
+            )
+            return self._build_enriched_job_response(raw_job=raw_job, enrichment=None)
+
+        try:
+            enrichment = await self.enrichment_repo.get_latest_by_job_id(job_id)
+        except RepositoryError as exc:
+            log.bind(error=str(exc)).error("Failed to fetch latest enrichment")
+            raise BusinessLogicError("Failed to fetch enriched job.") from exc
+
+        enriched_job = self._build_enriched_job_response(
+            raw_job=raw_job,
+            enrichment=enrichment,
+        )
+        log.info("Fetched enriched job")
+        return enriched_job
 
     async def list_jobs(
         self,
@@ -494,7 +551,7 @@ class JobService:
 
     def _latest_enrichment_by_job_id(
         self,
-        enrichments: list[object],
+        enrichments: Sequence[object],
     ) -> dict[int, object]:
         """Select the latest enrichment row for each job id.
 

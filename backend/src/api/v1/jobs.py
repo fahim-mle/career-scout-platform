@@ -107,11 +107,11 @@ async def list_scraped_raw_jobs(
         ) from exc
 
 
-@router.get("/{job_id}", response_model=JobResponse)
+@router.get("/{job_id}", response_model=EnrichedJobResponse)
 async def get_job(
     job_id: int,
     service: Annotated[JobService, Depends(get_job_service)],
-) -> JobResponse:
+) -> EnrichedJobResponse:
     """Get one job by ID.
 
     Args:
@@ -125,7 +125,37 @@ async def get_job(
         HTTPException: If job is missing or service fails.
     """
     try:
-        return await service.get_job(job_id)
+        return await service.get_enriched_job(job_id)
+    except NotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except BusinessLogicError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@raw_jobs_router.get("/scraped_raw_jobs/{job_id}", response_model=RawJobResponse)
+async def get_scraped_raw_job(
+    job_id: int,
+    service: Annotated[JobService, Depends(get_job_service)],
+) -> RawJobResponse:
+    """Get one raw scraped job by ID.
+
+    Args:
+        job_id: Primary key of the job.
+        service: Job service dependency.
+
+    Returns:
+        One raw scraped job response payload.
+
+    Raises:
+        HTTPException: If job is missing or service fails.
+    """
+    try:
+        return await service.get_raw_job(job_id)
     except NotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
