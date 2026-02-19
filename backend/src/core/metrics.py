@@ -200,6 +200,30 @@ jobs_updated_total: Counter = _get_or_create_counter(
     labelnames=("platform",),
 )
 
+enrichment_runs_total: Counter = _get_or_create_counter(
+    name="enrichment_runs_total",
+    documentation="Total enrichment task runs labeled by platform and status.",
+    labelnames=("platform", "status"),
+)
+
+enrichment_duration_seconds: Histogram = _get_or_create_histogram(
+    name="enrichment_duration_seconds",
+    documentation="Enrichment task duration in seconds labeled by platform.",
+    labelnames=("platform",),
+)
+
+jobs_enriched_total: Counter = _get_or_create_counter(
+    name="jobs_enriched_total",
+    documentation="Total number of jobs enriched, labeled by platform.",
+    labelnames=("platform",),
+)
+
+enrichment_errors_total: Counter = _get_or_create_counter(
+    name="enrichment_errors_total",
+    documentation="Total enrichment task errors, labeled by platform.",
+    labelnames=("platform",),
+)
+
 jobs_in_database_total: Gauge = _get_or_create_gauge(
     name="jobs_in_database_total",
     documentation="Current known jobs in database for a platform.",
@@ -317,6 +341,70 @@ def increment_jobs_updated(platform: str, count: int = 1) -> None:
     jobs_updated_total.labels(platform=platform).inc(count)
 
 
+def increment_enrichment_runs(platform: str, status: str) -> None:
+    """Increment enrichment run counter.
+
+    Args:
+        platform: Source platform label.
+        status: Run status label, one of success/failure/skipped.
+
+    Raises:
+        ValueError: If platform or status labels are invalid.
+    """
+    _validate_platform(platform)
+    _validate_status(status)
+
+    enrichment_runs_total.labels(platform=platform, status=status).inc()
+
+
+def observe_enrichment_duration(platform: str, duration_seconds: float) -> None:
+    """Observe enrichment task duration.
+
+    Args:
+        platform: Source platform label.
+        duration_seconds: Task runtime in seconds.
+
+    Raises:
+        ValueError: If labels or metric values are invalid.
+    """
+    _validate_platform(platform)
+    _validate_non_negative(duration_seconds, "duration_seconds")
+
+    enrichment_duration_seconds.labels(platform=platform).observe(duration_seconds)
+
+
+def increment_jobs_enriched(platform: str, count: int = 1) -> None:
+    """Increment enriched jobs counter.
+
+    Args:
+        platform: Source platform label.
+        count: Number of enriched jobs to add.
+
+    Raises:
+        ValueError: If platform label is invalid or count is negative.
+    """
+    _validate_platform(platform)
+    _validate_non_negative(float(count), "count")
+
+    jobs_enriched_total.labels(platform=platform).inc(count)
+
+
+def increment_enrichment_errors(platform: str, count: int = 1) -> None:
+    """Increment enrichment error counter.
+
+    Args:
+        platform: Source platform label.
+        count: Number of enrichment errors to add.
+
+    Raises:
+        ValueError: If platform label is invalid or count is negative.
+    """
+    _validate_platform(platform)
+    _validate_non_negative(float(count), "count")
+
+    enrichment_errors_total.labels(platform=platform).inc(count)
+
+
 def set_jobs_in_database(platform: str, total: int) -> None:
     """Set jobs-in-database gauge for platform.
 
@@ -380,20 +468,28 @@ def db_query_timer(query_type: str) -> Iterator[None]:
 
 
 __all__ = [
+    "enrichment_duration_seconds",
+    "enrichment_errors_total",
+    "enrichment_runs_total",
     "db_query_duration_seconds",
     "db_query_timer",
+    "increment_enrichment_errors",
+    "increment_enrichment_runs",
     "increment_jobs_duplicates",
     "increment_jobs_errors",
+    "increment_jobs_enriched",
     "increment_jobs_created",
     "increment_jobs_scraped",
     "increment_jobs_updated",
     "increment_scraper_runs",
     "jobs_duplicates_total",
+    "jobs_enriched_total",
     "jobs_errors_total",
     "jobs_created_total",
     "jobs_in_database_total",
     "jobs_scraped_total",
     "jobs_updated_total",
+    "observe_enrichment_duration",
     "observe_db_query_duration",
     "observe_scraper_duration",
     "scraper_duration_seconds",
