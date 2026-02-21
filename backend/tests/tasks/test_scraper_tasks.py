@@ -42,7 +42,9 @@ class FakeBoundTask:
 
 SCRAPE_TASK_RUN = scraper_tasks.scrape_linkedin_jobs.run.__func__  # type: ignore[attr-defined]
 SEEK_SCRAPE_TASK_RUN = scraper_tasks.scrape_seek_jobs.run.__func__  # type: ignore[attr-defined]
+SEEK_PROFILE_SET_TASK_RUN = scraper_tasks.scrape_seek_profile_set.run.__func__  # type: ignore[attr-defined]
 INDEED_SCRAPE_TASK_RUN = scraper_tasks.scrape_indeed_jobs.run.__func__  # type: ignore[attr-defined]
+INDEED_PROFILE_SET_TASK_RUN = scraper_tasks.scrape_indeed_profile_set.run.__func__  # type: ignore[attr-defined]
 
 
 def test_record_scraper_result_metrics_increments_jobs_created(
@@ -278,6 +280,84 @@ def test_load_linkedin_search_profiles_invalid_priority_falls_back_to_index(
     monkeypatch.setattr(scraper_tasks, "LINKEDIN_PROFILE_CONFIG_PATH", config_path)
 
     profiles = scraper_tasks._load_linkedin_search_profiles()
+
+    assert len(profiles) == 2
+    assert profiles[0]["id"] == "alpha"
+    assert profiles[0]["priority"] == 1
+    assert profiles[1]["id"] == "beta"
+    assert profiles[1]["priority"] == 3
+
+
+def test_load_seek_search_profiles_invalid_priority_falls_back_to_index(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Seek profile loader falls back to profile index on invalid priority."""
+    config_path = tmp_path / "seek_profiles.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "id": "alpha",
+                        "query": "python",
+                        "location": "brisbane",
+                        "limit": 3,
+                        "priority": "invalid",
+                    },
+                    {
+                        "id": "beta",
+                        "query": "backend",
+                        "location": "remote",
+                        "limit": 4,
+                        "priority": 3,
+                    },
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr(scraper_tasks, "SEEK_PROFILE_CONFIG_PATH", config_path)
+
+    profiles = scraper_tasks._load_seek_search_profiles()
+
+    assert len(profiles) == 2
+    assert profiles[0]["id"] == "alpha"
+    assert profiles[0]["priority"] == 1
+    assert profiles[1]["id"] == "beta"
+    assert profiles[1]["priority"] == 3
+
+
+def test_load_indeed_search_profiles_invalid_priority_falls_back_to_index(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Indeed profile loader falls back to profile index on invalid priority."""
+    config_path = tmp_path / "indeed_profiles.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "id": "alpha",
+                        "query": "python",
+                        "location": "brisbane",
+                        "limit": 3,
+                        "priority": "invalid",
+                    },
+                    {
+                        "id": "beta",
+                        "query": "backend",
+                        "location": "remote",
+                        "limit": 4,
+                        "priority": 3,
+                    },
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr(scraper_tasks, "INDEED_PROFILE_CONFIG_PATH", config_path)
+
+    profiles = scraper_tasks._load_indeed_search_profiles()
 
     assert len(profiles) == 2
     assert profiles[0]["id"] == "alpha"
@@ -533,6 +613,62 @@ def test_scrape_seek_jobs_triggers_enrichment_when_job_ids_exist(
     assert enqueue_call["countdown"] == 5
 
 
+def test_scrape_seek_profile_set_triggers_enrichment_when_job_ids_exist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seek profile-set task enqueues enrichment from aggregated profile ids."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def fake_scrape_and_persist(**_kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "platform": "seek",
+            "scraped": 2,
+            "created": 1,
+            "updated": 1,
+            "duplicates": 0,
+            "failed": 0,
+            "enrichment_job_ids": [131, 141],
+        }
+
+    enqueue_calls: list[dict[str, Any]] = []
+
+    def fake_send_task(name: str, kwargs: dict[str, Any], countdown: int) -> None:
+        enqueue_calls.append({"name": name, "kwargs": kwargs, "countdown": countdown})
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_load_seek_search_profiles",
+        lambda: [
+            {
+                "id": "seek-1",
+                "query": "python",
+                "location": "brisbane",
+                "limit": 2,
+                "priority": 1,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_seek_scrape_and_persist",
+        fake_scrape_and_persist,
+    )
+    monkeypatch.setattr(scraper_tasks.celery_app, "send_task", fake_send_task)
+
+    result = SEEK_PROFILE_SET_TASK_RUN(task)
+
+    assert result["status"] == "success"
+    assert result["profiles_processed"] == 1
+    assert result["enrichment_job_ids"] == [131, 141]
+    assert len(enqueue_calls) == 1
+    enqueue_call = enqueue_calls[0]
+    assert enqueue_call["name"] == scraper_tasks.ENRICHMENT_TASK_NAME
+    assert enqueue_call["kwargs"] == {"platform": "seek", "job_ids": [131, 141]}
+    assert enqueue_call["countdown"] == 5
+
+
 def test_scrape_indeed_jobs_returns_skipped_when_scraper_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -655,6 +791,62 @@ def test_scrape_indeed_jobs_triggers_enrichment_when_job_ids_exist(
     enqueue_call = enqueue_calls[0]
     assert enqueue_call["name"] == scraper_tasks.ENRICHMENT_TASK_NAME
     assert enqueue_call["kwargs"] == {"platform": "indeed", "job_ids": [81, 91]}
+    assert enqueue_call["countdown"] == 5
+
+
+def test_scrape_indeed_profile_set_triggers_enrichment_when_job_ids_exist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Indeed profile-set task enqueues enrichment from aggregated profile ids."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def fake_scrape_and_persist(**_kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "platform": "indeed",
+            "scraped": 2,
+            "created": 1,
+            "updated": 1,
+            "duplicates": 0,
+            "failed": 0,
+            "enrichment_job_ids": [231, 241],
+        }
+
+    enqueue_calls: list[dict[str, Any]] = []
+
+    def fake_send_task(name: str, kwargs: dict[str, Any], countdown: int) -> None:
+        enqueue_calls.append({"name": name, "kwargs": kwargs, "countdown": countdown})
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_load_indeed_search_profiles",
+        lambda: [
+            {
+                "id": "indeed-1",
+                "query": "python",
+                "location": "brisbane",
+                "limit": 2,
+                "priority": 1,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_indeed_scrape_and_persist",
+        fake_scrape_and_persist,
+    )
+    monkeypatch.setattr(scraper_tasks.celery_app, "send_task", fake_send_task)
+
+    result = INDEED_PROFILE_SET_TASK_RUN(task)
+
+    assert result["status"] == "success"
+    assert result["profiles_processed"] == 1
+    assert result["enrichment_job_ids"] == [231, 241]
+    assert len(enqueue_calls) == 1
+    enqueue_call = enqueue_calls[0]
+    assert enqueue_call["name"] == scraper_tasks.ENRICHMENT_TASK_NAME
+    assert enqueue_call["kwargs"] == {"platform": "indeed", "job_ids": [231, 241]}
     assert enqueue_call["countdown"] == 5
 
 

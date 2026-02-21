@@ -1,0 +1,30 @@
+{
+  "version": "1.0",
+  "description": "Seek search profiles prioritized for Australia with Brisbane first",
+  "profiles": [
+    {
+      "id": "brisbane-junior-software-engineer",
+      "active": true,
+      "priority": 1,
+      "query": "Junior Software Engineer Python Node React",
+      "location": "Brisbane QLD",
+      "limit": 5
+    },
+    {
+      "id": "brisbane-junior-web-developer",
+      "active": true,
+      "priority": 2,
+      "query": "Junior Web Developer JavaScript React",
+      "location": "Brisbane QLD",
+      "limit": 5
+    },
+    {
+      "id": "australia-junior-data-analyst",
+      "active": true,
+      "priority": 3,
+      "query": "Junior Data Analyst Python SQL",
+      "location": "Australia",
+      "limit": 5
+    }
+  ]
+}
