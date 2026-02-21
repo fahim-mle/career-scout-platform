@@ -922,8 +922,14 @@ def scrape_seek_profile_set(self: DatabaseTask) -> dict[str, Any]:
             totals["updated"] += int(result.get("updated", 0))
             totals["duplicates"] += int(result.get("duplicates", 0))
             totals["failed"] += int(result.get("failed", 0))
-            enrichment_job_ids.extend(
-                [job_id for job_id in result.get("enrichment_job_ids", [])]
+            profile_enrichment_job_ids = [
+                job_id for job_id in result.get("enrichment_job_ids", [])
+            ]
+            enrichment_job_ids.extend(profile_enrichment_job_ids)
+            _enqueue_enrichment_task(
+                platform=SEEK_PLATFORM,
+                job_ids=profile_enrichment_job_ids,
+                task_id=self.request.id,
             )
 
         _record_scraper_result_metrics(
@@ -940,11 +946,6 @@ def scrape_seek_profile_set(self: DatabaseTask) -> dict[str, Any]:
         )
 
         run_status = "success"
-        _enqueue_enrichment_task(
-            platform=SEEK_PLATFORM,
-            job_ids=enrichment_job_ids,
-            task_id=self.request.id,
-        )
         return {
             "status": "success",
             "platform": SEEK_PLATFORM,
@@ -1065,8 +1066,14 @@ def scrape_indeed_profile_set(self: DatabaseTask) -> dict[str, Any]:
             totals["updated"] += int(result.get("updated", 0))
             totals["duplicates"] += int(result.get("duplicates", 0))
             totals["failed"] += int(result.get("failed", 0))
-            enrichment_job_ids.extend(
-                [job_id for job_id in result.get("enrichment_job_ids", [])]
+            profile_enrichment_job_ids = [
+                job_id for job_id in result.get("enrichment_job_ids", [])
+            ]
+            enrichment_job_ids.extend(profile_enrichment_job_ids)
+            _enqueue_enrichment_task(
+                platform=INDEED_PLATFORM,
+                job_ids=profile_enrichment_job_ids,
+                task_id=self.request.id,
             )
 
         _record_scraper_result_metrics(
@@ -1083,11 +1090,6 @@ def scrape_indeed_profile_set(self: DatabaseTask) -> dict[str, Any]:
         )
 
         run_status = "success"
-        _enqueue_enrichment_task(
-            platform=INDEED_PLATFORM,
-            job_ids=enrichment_job_ids,
-            task_id=self.request.id,
-        )
         return {
             "status": "success",
             "platform": INDEED_PLATFORM,
