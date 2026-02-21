@@ -1,5 +1,6 @@
 import { ChevronRight, ExternalLink } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { formatDisplayDate } from '../../lib/date';
 import { Job } from '../../types/job';
 
 interface JobTableProps {
@@ -13,12 +14,12 @@ const JobTable = ({ jobs }: JobTableProps) => {
         <table className="w-full text-left">
           <thead className="bg-white/5 border-b border-white/10">
             <tr>
-              <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Job Title</th>
-              <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Company</th>
-              <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Location</th>
-              <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Match</th>
-              <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Posted</th>
-              <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider text-right">Actions</th>
+              <th scope="col" className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Job Title</th>
+              <th scope="col" className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Company</th>
+              <th scope="col" className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Location</th>
+              <th scope="col" className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Match</th>
+              <th scope="col" className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Posted</th>
+              <th scope="col" className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
@@ -50,7 +51,7 @@ const JobTable = ({ jobs }: JobTableProps) => {
                   )}
                 </td>
                 <td className="px-6 py-4 text-slate-400 text-sm">
-                  {job.postedDate ? new Date(job.postedDate).toLocaleDateString() : '...'}
+                  {formatDisplayDate(job.postedDate)}
                 </td>
                 <td className="px-6 py-4 text-right">
                   <div className="flex items-center justify-end gap-3 text-slate-500">

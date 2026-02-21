@@ -29,6 +29,8 @@ const SidebarItem = ({ to, icon: Icon, label, active }: { to: string; icon: Comp
 
 const Layout = ({ children }: { children: ReactNode }) => {
   const location = useLocation()
+  const isJobBoardRoute =
+    location.pathname === '/' || location.pathname.startsWith('/jobs')
 
   return (
     <div className="flex h-screen bg-[#0B1120] text-slate-200 overflow-hidden">
@@ -47,7 +49,7 @@ const Layout = ({ children }: { children: ReactNode }) => {
               to="/jobs"
               icon={LayoutGrid}
               label="Job Board"
-              active={location.pathname === '/jobs'}
+              active={isJobBoardRoute}
             />
             <SidebarItem
               to="/applications"

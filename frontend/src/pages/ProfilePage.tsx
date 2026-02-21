@@ -15,19 +15,19 @@ const ProfilePage = () => {
           <div className="flex-1 space-y-4">
             <div className="grid grid-cols-2 gap-6">
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Full Name</label>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Full Name</p>
                 <p className="text-lg font-medium text-white">Alex Johnson</p>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Title</label>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Title</p>
                 <p className="text-lg font-medium text-white">Software Engineer</p>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Email</label>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Email</p>
                 <p className="text-lg font-medium text-white">alex.j@example.com</p>
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Location</label>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Location</p>
                 <p className="text-lg font-medium text-white">Brisbane, Australia</p>
               </div>
             </div>

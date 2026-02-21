@@ -1,5 +1,6 @@
 import { Calendar, ExternalLink, MapPin } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { formatDisplayDate } from '../../lib/date';
 import { Job } from '../../types/job';
 
 interface JobCardProps {
@@ -32,7 +33,7 @@ const JobCard = ({ job }: JobCardProps) => {
         </div>
         <div className="flex items-center gap-2 text-sm text-slate-400">
           <Calendar className="w-4 h-4" />
-          <span>{job.postedDate ? new Date(job.postedDate).toLocaleDateString() : 'Date missing'}</span>
+          <span>{formatDisplayDate(job.postedDate)}</span>
         </div>
       </div>
 

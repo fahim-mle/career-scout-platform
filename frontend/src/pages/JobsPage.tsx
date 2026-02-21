@@ -21,6 +21,10 @@ const JobsPage = () => {
       job.location.toLowerCase().includes(query)
     );
   });
+  const hasSearchQuery = searchQuery.trim().length > 0;
+  const subtitle = hasSearchQuery
+    ? `Showing ${filteredJobs.length} of ${jobs.length} opportunities.`
+    : `Explore ${jobs.length} enriched opportunities tailored for you.`;
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -30,7 +34,7 @@ const JobsPage = () => {
             Job Board
           </h1>
           <p className="text-slate-400 mt-2 font-medium">
-            Explore {jobs.length} enriched opportunities tailored for you.
+            {subtitle}
           </p>
         </div>
 
@@ -70,18 +74,27 @@ const JobsPage = () => {
       </div>
 
       {loading && jobs.length === 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {[1, 2, 3, 4, 5, 6].map((i) => (
-            <div key={i} className="glass-card p-6 space-y-4 animate-pulse">
-              <div className="h-6 bg-white/10 rounded-lg w-3/4" />
-              <div className="h-4 bg-white/5 rounded-lg w-1/2" />
-              <div className="space-y-2 pt-4">
-                <div className="h-3 bg-white/5 rounded-lg w-full" />
-                <div className="h-3 bg-white/5 rounded-lg w-full" />
+        viewMode === 'grid' ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <div key={i} className="glass-card p-6 space-y-4 animate-pulse">
+                <div className="h-6 bg-white/10 rounded-lg w-3/4" />
+                <div className="h-4 bg-white/5 rounded-lg w-1/2" />
+                <div className="space-y-2 pt-4">
+                  <div className="h-3 bg-white/5 rounded-lg w-full" />
+                  <div className="h-3 bg-white/5 rounded-lg w-full" />
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div className="glass-card p-6 space-y-4 animate-pulse">
+            <div className="h-8 bg-white/10 rounded-lg w-full" />
+            <div className="h-12 bg-white/5 rounded-lg w-full" />
+            <div className="h-12 bg-white/5 rounded-lg w-full" />
+            <div className="h-12 bg-white/5 rounded-lg w-full" />
+          </div>
+        )
       ) : error ? (
         <div className="glass-card p-12 text-center space-y-4">
           <p className="text-red-400 font-medium">{error}</p>

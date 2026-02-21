@@ -12,19 +12,37 @@ import {
 import { useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useJobs } from '../../hooks/useJobs';
+import { formatDisplayDate } from '../../lib/date';
 
 const JobDetails = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { job, loading, error, fetchJob } = useJobs();
+  const parsedJobId = id ? Number.parseInt(id, 10) : Number.NaN;
+  const hasValidJobId = Number.isInteger(parsedJobId) && parsedJobId > 0;
 
   useEffect(() => {
-    if (id) {
-      fetchJob(parseInt(id));
+    if (hasValidJobId) {
+      fetchJob(parsedJobId);
     }
-  }, [id, fetchJob]);
+  }, [parsedJobId, hasValidJobId, fetchJob]);
 
-  if (loading) {
+  if (id && !hasValidJobId) {
+    return (
+      <div className="glass-card p-12 text-center space-y-4">
+        <p className="text-red-400 font-medium">Invalid job id.</p>
+        <button
+          onClick={() => navigate('/jobs')}
+          className="text-indigo-400 hover:text-indigo-300 font-medium flex items-center justify-center gap-2 mx-auto"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Job Board
+        </button>
+      </div>
+    );
+  }
+
+  if (loading || (!job && !error && hasValidJobId)) {
     return (
       <div className="flex flex-col items-center justify-center h-64 space-y-4">
         <div className="w-12 h-12 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
@@ -115,13 +133,13 @@ const JobDetails = () => {
               <Clock className="w-4 h-4 text-indigo-400 mb-1" />
               <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Posted</span>
               <span className="text-sm font-semibold text-white">
-                {job.postedDate ? new Date(job.postedDate).toLocaleDateString() : 'Unknown'}
+                {formatDisplayDate(job.postedDate, 'Unknown')}
               </span>
             </div>
             <div className="glass-card p-4 flex flex-col items-center justify-center text-center space-y-1">
               <Briefcase className="w-4 h-4 text-indigo-400 mb-1" />
               <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Type</span>
-              <span className="text-sm font-semibold text-white">{job.jobType || 'Full-time'}</span>
+              <span className="text-sm font-semibold text-white">{job.jobType || 'Not specified'}</span>
             </div>
             <div className="glass-card p-4 flex flex-col items-center justify-center text-center space-y-1">
               <DollarSign className="w-4 h-4 text-indigo-400 mb-1" />
