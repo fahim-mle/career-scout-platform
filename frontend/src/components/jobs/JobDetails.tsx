@@ -17,15 +17,16 @@ import { formatDisplayDate, formatDisplayDateTime } from '../../lib/date';
 const JobDetails = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { job, loading, error, fetchJob } = useJobs();
+  const { job, jobLoading, jobError, fetchJob } = useJobs();
   const parsedJobId = id ? Number.parseInt(id, 10) : Number.NaN;
   const hasValidJobId = Number.isInteger(parsedJobId) && parsedJobId > 0;
 
   useEffect(() => {
-    if (hasValidJobId) {
+    const isValidJobId = Number.isInteger(parsedJobId) && parsedJobId > 0;
+    if (isValidJobId) {
       fetchJob(parsedJobId);
     }
-  }, [parsedJobId, hasValidJobId, fetchJob]);
+  }, [parsedJobId, fetchJob]);
 
   if (id && !hasValidJobId) {
     return (
@@ -42,7 +43,7 @@ const JobDetails = () => {
     );
   }
 
-  if (loading || (!job && !error && hasValidJobId)) {
+  if (jobLoading || (!job && !jobError && hasValidJobId)) {
     return (
       <div className="flex flex-col items-center justify-center h-64 space-y-4">
         <div className="w-12 h-12 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
@@ -51,10 +52,10 @@ const JobDetails = () => {
     );
   }
 
-  if (error) {
+  if (jobError) {
     return (
       <div className="glass-card p-12 text-center space-y-4">
-        <p className="text-red-400 font-medium">{error}</p>
+        <p className="text-red-400 font-medium">{jobError}</p>
         <button
           onClick={() => navigate('/jobs')}
           className="text-indigo-400 hover:text-indigo-300 font-medium flex items-center justify-center gap-2 mx-auto"
@@ -70,11 +71,19 @@ const JobDetails = () => {
 
   const fullDescription = (job.descriptionFull || '').trim();
   const shortDescription = (job.descriptionShort || '').trim();
-  const displayDescription =
-    fullDescription.length >= shortDescription.length
-      ? fullDescription || shortDescription
-      : shortDescription;
-  const applyUrl = /^https?:\/\//i.test(job.url) ? job.url : null;
+  const displayDescription = fullDescription || shortDescription;
+  const applyUrl = (() => {
+    try {
+      const parsedUrl = new URL(job.url);
+      const protocol = parsedUrl.protocol.toLowerCase();
+      if (protocol === 'http:' || protocol === 'https:') {
+        return parsedUrl.toString();
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  })();
   return (
     <div className="max-w-5xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* Navigation */}

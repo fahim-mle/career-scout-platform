@@ -6,7 +6,7 @@ export interface BackendJob {
   title: string;
   company: string;
   location: string;
-  platform: Platform;
+  platform: string;
   url: string;
   external_id: string;
   description_short: string | null;
@@ -31,6 +31,17 @@ export interface BackendJob {
   relevance_score: number | null;
 }
 
+const ALLOWED_PLATFORMS = ['linkedin', 'seek', 'indeed'] as const;
+
+const normalizePlatform = (platform: string): Platform => {
+  if (ALLOWED_PLATFORMS.includes(platform as Platform)) {
+    return platform as Platform;
+  }
+
+  console.warn(`Unknown platform received from API: ${platform}`);
+  return 'linkedin';
+};
+
 export interface GetJobsParams {
   skip?: number;
   limit?: number;
@@ -47,7 +58,7 @@ const normalizeJob = (data: BackendJob): Job => ({
   title: data.title,
   company: data.company,
   location: data.location,
-  platform: data.platform,
+  platform: normalizePlatform(data.platform),
   url: data.url,
   externalId: data.external_id,
   descriptionShort: data.description_short,
