@@ -35,19 +35,19 @@ celery_app.conf.update(
     timezone="UTC",
     enable_utc=True,
     beat_schedule={
-        "daily-linkedin-scrape": {
+        "linkedin-scrape-every-4h": {
             "task": "src.tasks.scraper_tasks.scrape_linkedin_profile_set",
-            "schedule": crontab(hour=9, minute=0),
+            "schedule": crontab(hour="*/4", minute=0),
         },
-        "daily-linkedin-enrichment-backup": {
+        "linkedin-enrichment-backup-every-4h": {
             "task": "src.tasks.enrichment_tasks.enrich_unstructured_jobs_task",
-            # Backup schedule runs before scoring to avoid overlap confusion.
-            "schedule": crontab(hour=9, minute=30),
+            # Backup schedule runs after scrape and before scoring.
+            "schedule": crontab(hour="*/4", minute=20),
             "kwargs": {"platform": "linkedin"},
         },
-        "daily-linkedin-scoring": {
+        "linkedin-scoring-every-4h": {
             "task": "src.tasks.scoring_tasks.score_all_unscored_jobs_task",
-            "schedule": crontab(hour=10, minute=0),
+            "schedule": crontab(hour="*/4", minute=40),
             "kwargs": {"platform": "linkedin"},
         },
     },
