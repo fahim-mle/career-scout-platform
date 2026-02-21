@@ -72,7 +72,12 @@ const JobDetails = () => {
 
   const fullDescription = (job.descriptionFull || '').trim();
   const shortDescription = (job.descriptionShort || '').trim();
-  const displayDescription = fullDescription || shortDescription;
+  const displayDescription =
+    fullDescription.length >= shortDescription.length
+      ? fullDescription || shortDescription
+      : shortDescription;
+  const hasStructuredSections =
+    Array.isArray(job.descriptionSections) && job.descriptionSections.length > 0;
   const applyUrl = getSafeExternalUrl(job.url);
   const scrapedAtValue = job.scrapedAt && job.scrapedAt !== 'null' ? job.scrapedAt : null;
   return (
@@ -171,9 +176,24 @@ const JobDetails = () => {
             <h3 className="text-2xl font-bold text-white flex items-center gap-2">
               Job Description
             </h3>
-            <div className="prose prose-invert max-w-none text-slate-300 leading-relaxed whitespace-pre-wrap">
-              {displayDescription || 'No description available for this position.'}
-            </div>
+            {hasStructuredSections ? (
+              <div className="space-y-6">
+                {job.descriptionSections?.map((section, sectionIndex) => (
+                  <div key={`${section.title}-${sectionIndex}`} className="space-y-2">
+                    <h4 className="text-lg font-semibold text-white">{section.title}</h4>
+                    <ul className="list-disc pl-5 space-y-1 text-slate-300">
+                      {section.items.map((item, itemIndex) => (
+                        <li key={`${section.title}-${itemIndex}`}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="prose prose-invert max-w-none text-slate-300 leading-relaxed whitespace-pre-wrap">
+                {displayDescription || 'No description available for this position.'}
+              </div>
+            )}
           </section>
         </div>
 

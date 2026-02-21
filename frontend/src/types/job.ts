@@ -9,6 +9,11 @@ export interface SalaryRange {
   raw: string | null;
 }
 
+export interface DescriptionSection {
+  title: string;
+  items: string[];
+}
+
 export interface Job {
   id: number;
   title: string;
@@ -32,6 +37,7 @@ export interface Job {
   enrichmentStatus: EnrichmentStatus | null;
   enrichmentVersion: string | null;
   enrichmentUpdatedAt: string | null;
+  descriptionSections: DescriptionSection[] | null;
 
   // Scoring
   relevanceScore: number | null;
