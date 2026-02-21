@@ -1,0 +1,27 @@
+{
+  "include": [
+    "backend/src",
+    "backend/tests",
+    "backend/scripts",
+    "backend/alembic",
+    "backend/main.py",
+    "backend/celery_app.py"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "**/.pytest_cache",
+    "frontend",
+    "node_modules"
+  ],
+  "venvPath": "backend",
+  "venv": ".venv",
+  "executionEnvironments": [
+    {
+      "root": "backend",
+      "extraPaths": [
+        "backend",
+        "backend/src"
+      ]
+    }
+  ]
+}
