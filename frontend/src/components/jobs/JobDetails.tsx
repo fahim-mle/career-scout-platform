@@ -74,6 +74,7 @@ const JobDetails = () => {
     fullDescription.length >= shortDescription.length
       ? fullDescription || shortDescription
       : shortDescription;
+  const applyUrl = /^https?:\/\//i.test(job.url) ? job.url : null;
   return (
     <div className="max-w-5xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* Navigation */}
@@ -112,15 +113,25 @@ const JobDetails = () => {
         </div>
 
         <div className="flex gap-4">
-          <a
-            href={job.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-4 rounded-xl font-bold transition-all shadow-[0_0_20px_rgba(79,70,229,0.3)] hover:shadow-[0_0_25px_rgba(79,70,229,0.5)]"
-          >
-            Apply Now
-            <ExternalLink className="w-5 h-5" />
-          </a>
+          {applyUrl ? (
+            <a
+              href={applyUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-4 rounded-xl font-bold transition-all shadow-[0_0_20px_rgba(79,70,229,0.3)] hover:shadow-[0_0_25px_rgba(79,70,229,0.5)]"
+            >
+              Apply Now
+              <ExternalLink className="w-5 h-5" />
+            </a>
+          ) : (
+            <button
+              type="button"
+              disabled
+              className="flex items-center gap-2 bg-slate-700/60 text-slate-400 px-8 py-4 rounded-xl font-bold cursor-not-allowed"
+            >
+              Apply link unavailable
+            </button>
+          )}
         </div>
       </div>
 
@@ -173,9 +184,9 @@ const JobDetails = () => {
             <section className="glass-card p-6 space-y-4">
               <h4 className="text-lg font-bold text-white">Required Skills</h4>
               <div className="flex flex-wrap gap-2">
-                {job.skills.map((skill) => (
+                {job.skills.map((skill, index) => (
                   <span
-                    key={skill}
+                    key={`${skill}-${index}`}
                     className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-slate-300 font-medium"
                   >
                     {skill}
