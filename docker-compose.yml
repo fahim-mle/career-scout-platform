@@ -249,6 +249,24 @@ services:
       retries: 5
       start_period: 30s
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev
+    container_name: career-scout-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - app-network
+    depends_on:
+      backend:
+        condition: service_healthy
+
 volumes:
   postgres_data:
     driver: local
