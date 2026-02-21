@@ -658,7 +658,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * (sum(increase(scraper_runs_total{status=\"success\", platform=~\"linkedin|seek|indeed\"}[1h])) by (platform) / clamp_min(sum(increase(scraper_runs_total{platform=~\"linkedin|seek|indeed\"}[1h])) by (platform), 1e-9))",
+          "expr": "100 * ((sum(increase(scraper_runs_total{status=\"success\", platform=~\"linkedin|seek|indeed\"}[1h])) by (platform)) or on(platform) (0 * sum(increase(scraper_runs_total{platform=~\"linkedin|seek|indeed\"}[1h])) by (platform))) / clamp_min(sum(increase(scraper_runs_total{platform=~\"linkedin|seek|indeed\"}[1h])) by (platform), 1e-9)",
           "legendFormat": "{{platform}}",
           "range": true,
           "refId": "A"

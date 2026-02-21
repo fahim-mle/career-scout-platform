@@ -28,7 +28,7 @@ def test_seek_scrape_schedule_uses_four_hour_cadence_with_15_minute_offset() -> 
     assert seek_entry["schedule"] != crontab(hour="*/4", minute=30)
 
 
-def test_indeed_scrape_schedule_uses_four_hour_cadence_with_15_minute_offset() -> None:
+def test_indeed_scrape_schedule_uses_four_hour_cadence_with_30_minute_offset() -> None:
     """Indeed beat schedule runs every four hours, 15 minutes after Seek."""
     beat_schedule = celery_app.conf.beat_schedule
     indeed_entry = beat_schedule["indeed-scrape-every-4h"]

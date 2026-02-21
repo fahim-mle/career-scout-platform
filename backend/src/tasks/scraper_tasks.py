@@ -198,105 +198,16 @@ async def _run_linkedin_scrape_and_persist(
 
     Returns:
         Structured scrape and persistence metrics.
-
-    Raises:
-        RuntimeError: If scraper execution fails before persistence loop.
     """
-    logger.info(
-        "Starting LinkedIn scrape orchestration",
+    return await _run_scrape_and_persist(
         query=query,
         location=location,
         limit=limit,
         task_id=task_id,
+        platform=LINKEDIN_PLATFORM,
+        scraper_class=LinkedInScraper,
+        rate_limit_seconds=3.0,
     )
-
-    async with LinkedInScraper(headless=True, rate_limit_seconds=3.0) as scraper:
-        scraped_jobs = await scraper.scrape_jobs(
-            query=query,
-            location=location,
-            limit=limit,
-        )
-
-    created_count = 0
-    updated_count = 0
-    duplicate_count = 0
-    failed_count = 0
-    enrichment_job_ids: set[int] = set()
-
-    async with get_session() as db_session:
-        job_repository = JobRepository(db_session)
-        for job_payload in scraped_jobs:
-            external_id = str(job_payload.get("external_id", ""))
-
-            if not external_id:
-                failed_count += 1
-                logger.warning(
-                    "Skipping scraped job without external_id",
-                    task_id=task_id,
-                )
-                continue
-
-            try:
-                existing_job = await job_repository.get_by_external_id(
-                    external_id=external_id,
-                    platform="linkedin",
-                )
-                if existing_job is not None:
-                    update_payload = _build_job_update_payload(
-                        existing_job=existing_job,
-                        scraped_payload=job_payload,
-                    )
-                    if update_payload:
-                        updated_job = await job_repository.update(
-                            existing_job.id, update_payload
-                        )
-                        if updated_job is not None:
-                            enrichment_job_ids.add(updated_job.id)
-                            updated_count += 1
-                        continue
-
-                    duplicate_count += 1
-                    continue
-
-                created_job = await job_repository.create(job_payload)
-                enrichment_job_ids.add(created_job.id)
-                created_count += 1
-            except DuplicateJobError:
-                duplicate_count += 1
-            except RepositoryError as exc:
-                failed_count += 1
-                logger.error(
-                    "Failed to persist scraped LinkedIn job",
-                    external_id=external_id,
-                    error=str(exc),
-                    task_id=task_id,
-                )
-            except Exception as exc:
-                failed_count += 1
-                logger.error(
-                    "Unexpected persistence error for scraped LinkedIn job",
-                    external_id=external_id,
-                    error=str(exc),
-                    task_id=task_id,
-                    exc_info=True,
-                )
-
-    result = {
-        "status": "success",
-        "platform": "linkedin",
-        "query": query,
-        "location": location,
-        "scraped": len(scraped_jobs),
-        "created": created_count,
-        "updated": updated_count,
-        "duplicates": duplicate_count,
-        "failed": failed_count,
-        "enrichment_job_ids": sorted(enrichment_job_ids),
-    }
-    logger.info(
-        "Completed LinkedIn scrape orchestration", task_id=task_id, result=result
-    )
-    return result
 
 
 async def _run_seek_scrape_and_persist(
@@ -305,100 +216,26 @@ async def _run_seek_scrape_and_persist(
     limit: int,
     task_id: str | None,
 ) -> dict[str, Any]:
-    """Scrape Seek jobs and persist new or enriched rows."""
-    logger.info(
-        "Starting Seek scrape orchestration",
+    """Scrape Seek jobs and persist new or enriched rows.
+
+    Args:
+        query: Search query for Seek jobs.
+        location: Search location for Seek jobs.
+        limit: Maximum number of jobs to scrape.
+        task_id: Celery task id for structured logging.
+
+    Returns:
+        Structured scrape and persistence metrics.
+    """
+    return await _run_scrape_and_persist(
         query=query,
         location=location,
         limit=limit,
         task_id=task_id,
+        platform=SEEK_PLATFORM,
+        scraper_class=SeekScraper,
+        rate_limit_seconds=3.0,
     )
-
-    async with SeekScraper(headless=True, rate_limit_seconds=3.0) as scraper:
-        scraped_jobs = await scraper.scrape_jobs(
-            query=query,
-            location=location,
-            limit=limit,
-        )
-
-    created_count = 0
-    updated_count = 0
-    duplicate_count = 0
-    failed_count = 0
-    enrichment_job_ids: set[int] = set()
-
-    async with get_session() as db_session:
-        job_repository = JobRepository(db_session)
-        for job_payload in scraped_jobs:
-            external_id = str(job_payload.get("external_id", ""))
-
-            if not external_id:
-                failed_count += 1
-                logger.warning(
-                    "Skipping scraped Seek job without external_id",
-                    task_id=task_id,
-                )
-                continue
-
-            try:
-                existing_job = await job_repository.get_by_external_id(
-                    external_id=external_id,
-                    platform=SEEK_PLATFORM,
-                )
-                if existing_job is not None:
-                    update_payload = _build_job_update_payload(
-                        existing_job=existing_job,
-                        scraped_payload=job_payload,
-                    )
-                    if update_payload:
-                        updated_job = await job_repository.update(
-                            existing_job.id, update_payload
-                        )
-                        if updated_job is not None:
-                            enrichment_job_ids.add(updated_job.id)
-                            updated_count += 1
-                        continue
-
-                    duplicate_count += 1
-                    continue
-
-                created_job = await job_repository.create(job_payload)
-                enrichment_job_ids.add(created_job.id)
-                created_count += 1
-            except DuplicateJobError:
-                duplicate_count += 1
-            except RepositoryError as exc:
-                failed_count += 1
-                logger.error(
-                    "Failed to persist scraped Seek job",
-                    external_id=external_id,
-                    error=str(exc),
-                    task_id=task_id,
-                )
-            except Exception as exc:
-                failed_count += 1
-                logger.error(
-                    "Unexpected persistence error for scraped Seek job",
-                    external_id=external_id,
-                    error=str(exc),
-                    task_id=task_id,
-                    exc_info=True,
-                )
-
-    result = {
-        "status": "success",
-        "platform": SEEK_PLATFORM,
-        "query": query,
-        "location": location,
-        "scraped": len(scraped_jobs),
-        "created": created_count,
-        "updated": updated_count,
-        "duplicates": duplicate_count,
-        "failed": failed_count,
-        "enrichment_job_ids": sorted(enrichment_job_ids),
-    }
-    logger.info("Completed Seek scrape orchestration", task_id=task_id, result=result)
-    return result
 
 
 async def _run_indeed_scrape_and_persist(
@@ -407,16 +244,82 @@ async def _run_indeed_scrape_and_persist(
     limit: int,
     task_id: str | None,
 ) -> dict[str, Any]:
-    """Scrape Indeed jobs and persist new or enriched rows."""
+    """Scrape Indeed jobs and persist new or enriched rows.
+
+    Args:
+        query: Search query for Indeed jobs.
+        location: Search location for Indeed jobs.
+        limit: Maximum number of jobs to scrape.
+        task_id: Celery task id for structured logging.
+
+    Returns:
+        Structured scrape and persistence metrics.
+    """
+    return await _run_scrape_and_persist(
+        query=query,
+        location=location,
+        limit=limit,
+        task_id=task_id,
+        platform=INDEED_PLATFORM,
+        scraper_class=IndeedScraper,
+        rate_limit_seconds=5.0,
+    )
+
+
+def _platform_display_name(platform: str) -> str:
+    """Resolve human-readable platform labels for logs.
+
+    Args:
+        platform: Scraper platform key.
+
+    Returns:
+        Display name aligned with existing scraper log messages.
+    """
+    display_names = {
+        LINKEDIN_PLATFORM: "LinkedIn",
+        SEEK_PLATFORM: "Seek",
+        INDEED_PLATFORM: "Indeed",
+    }
+    return display_names.get(platform, platform.capitalize())
+
+
+async def _run_scrape_and_persist(
+    query: str,
+    location: str,
+    limit: int,
+    task_id: str | None,
+    *,
+    platform: str,
+    scraper_class: type[Any],
+    rate_limit_seconds: float,
+) -> dict[str, Any]:
+    """Run scraper and persist scraped jobs with shared orchestration logic.
+
+    Args:
+        query: Search query for scrape execution.
+        location: Search location for scrape execution.
+        limit: Maximum number of jobs to scrape.
+        task_id: Celery task id for structured logging.
+        platform: Scraper platform key.
+        scraper_class: Platform-specific scraper implementation class.
+        rate_limit_seconds: Delay between scraper page actions.
+
+    Returns:
+        Structured scrape and persistence metrics.
+    """
+    platform_name = _platform_display_name(platform)
     logger.info(
-        "Starting Indeed scrape orchestration",
+        f"Starting {platform_name} scrape orchestration",
+        platform=platform,
         query=query,
         location=location,
         limit=limit,
         task_id=task_id,
     )
 
-    async with IndeedScraper(headless=True, rate_limit_seconds=5.0) as scraper:
+    async with scraper_class(
+        headless=True, rate_limit_seconds=rate_limit_seconds
+    ) as scraper:
         scraped_jobs = await scraper.scrape_jobs(
             query=query,
             location=location,
@@ -437,7 +340,8 @@ async def _run_indeed_scrape_and_persist(
             if not external_id:
                 failed_count += 1
                 logger.warning(
-                    "Skipping scraped Indeed job without external_id",
+                    f"Skipping scraped {platform_name} job without external_id",
+                    platform=platform,
                     task_id=task_id,
                 )
                 continue
@@ -445,7 +349,7 @@ async def _run_indeed_scrape_and_persist(
             try:
                 existing_job = await job_repository.get_by_external_id(
                     external_id=external_id,
-                    platform=INDEED_PLATFORM,
+                    platform=platform,
                 )
                 if existing_job is not None:
                     update_payload = _build_job_update_payload(
@@ -472,7 +376,8 @@ async def _run_indeed_scrape_and_persist(
             except RepositoryError as exc:
                 failed_count += 1
                 logger.error(
-                    "Failed to persist scraped Indeed job",
+                    f"Failed to persist scraped {platform_name} job",
+                    platform=platform,
                     external_id=external_id,
                     error=str(exc),
                     task_id=task_id,
@@ -480,7 +385,8 @@ async def _run_indeed_scrape_and_persist(
             except Exception as exc:
                 failed_count += 1
                 logger.error(
-                    "Unexpected persistence error for scraped Indeed job",
+                    f"Unexpected persistence error for scraped {platform_name} job",
+                    platform=platform,
                     external_id=external_id,
                     error=str(exc),
                     task_id=task_id,
@@ -489,7 +395,7 @@ async def _run_indeed_scrape_and_persist(
 
     result = {
         "status": "success",
-        "platform": INDEED_PLATFORM,
+        "platform": platform,
         "query": query,
         "location": location,
         "scraped": len(scraped_jobs),
@@ -499,7 +405,12 @@ async def _run_indeed_scrape_and_persist(
         "failed": failed_count,
         "enrichment_job_ids": sorted(enrichment_job_ids),
     }
-    logger.info("Completed Indeed scrape orchestration", task_id=task_id, result=result)
+    logger.info(
+        f"Completed {platform_name} scrape orchestration",
+        platform=platform,
+        task_id=task_id,
+        result=result,
+    )
     return result
 
 
