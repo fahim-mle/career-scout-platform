@@ -2,6 +2,7 @@
 
 from src.tasks.scraper_tasks import (
     DatabaseTask,
+    scrape_indeed_jobs,
     scrape_seek_jobs,
     scrape_linkedin_jobs,
     scrape_linkedin_profile_set,
@@ -22,6 +23,7 @@ __all__ = [
     "enrich_unstructured_jobs_task",
     "score_all_unscored_jobs_task",
     "score_single_job_task",
+    "scrape_indeed_jobs",
     "scrape_linkedin_jobs",
     "scrape_linkedin_profile_set",
     "scrape_seek_jobs",
