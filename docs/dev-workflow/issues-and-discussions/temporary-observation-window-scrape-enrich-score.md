@@ -69,6 +69,14 @@ Post-run snapshot for newly scraped job ids `86-93`:
   - `monitoring/grafana/dashboards/scraper-metrics.json`
   - `monitoring/grafana/dashboards/ai-scoring-metrics.json`
 
+### Multi-Platform Monitoring Note
+
+For LinkedIn, Seek, and Indeed monitoring, use these panels in `scraper-metrics.json`:
+
+- `Scraped Jobs Share by Platform (24h)` for platform distribution,
+- `Scraper Success Rate by Platform` for per-platform success trends,
+- `Per-Platform Scraped Throughput (LinkedIn/Seek/Indeed)` for hourly volume.
+
 ## Exit Criteria (End of Temporary Window)
 
 - At least 6 successful full cycles across the window.

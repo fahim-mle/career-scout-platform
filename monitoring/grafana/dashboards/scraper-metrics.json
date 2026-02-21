@@ -197,7 +197,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(jobs_created_total[24h]))",
+          "expr": "sum(increase(jobs_created_total[24h])) or vector(0)",
           "legendFormat": "created",
           "range": true,
           "refId": "A"
@@ -509,7 +509,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(jobs_in_database_total) by (platform)",
+          "expr": "sum(jobs_in_database_total{platform=~\"linkedin|seek|indeed\"}) by (platform) or label_replace(vector(0), \"platform\", \"linkedin\", \"\", \"\") or label_replace(vector(0), \"platform\", \"seek\", \"\", \"\") or label_replace(vector(0), \"platform\", \"indeed\", \"\", \"\")",
           "format": "table",
           "instant": true,
           "legendFormat": "{{platform}}",
@@ -517,7 +517,7 @@
           "refId": "A"
         }
       ],
-      "title": "Jobs in DB by Platform",
+      "title": "Jobs in DB by Platform (LinkedIn/Seek/Indeed)",
       "type": "table"
     },
     {
@@ -556,13 +556,115 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(increase(jobs_scraped_total[1h])) by (platform)",
+          "expr": "sum(increase(jobs_scraped_total{platform=~\"linkedin|seek|indeed\"}[1h])) by (platform)",
           "legendFormat": "{{platform}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Per-Platform Scraped Throughput",
+      "title": "Per-Platform Scraped Throughput (LinkedIn/Seek/Indeed)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 31
+      },
+      "id": 11,
+      "options": {
+        "displayLabels": [
+          "name",
+          "percent"
+        ],
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "pieType": "pie",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(jobs_scraped_total{platform=~\"linkedin|seek|indeed\"}[24h])) by (platform)",
+          "instant": true,
+          "legendFormat": "{{platform}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Scraped Jobs Share by Platform (24h)",
+      "type": "piechart"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 31
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "100 * ((sum(increase(scraper_runs_total{status=\"success\", platform=~\"linkedin|seek|indeed\"}[1h])) by (platform)) or on(platform) (0 * sum(increase(scraper_runs_total{platform=~\"linkedin|seek|indeed\"}[1h])) by (platform))) / clamp_min(sum(increase(scraper_runs_total{platform=~\"linkedin|seek|indeed\"}[1h])) by (platform), 1e-9)",
+          "legendFormat": "{{platform}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Scraper Success Rate by Platform",
       "type": "timeseries"
     }
   ],
@@ -571,6 +673,8 @@
   "tags": [
     "scraper",
     "linkedin",
+    "seek",
+    "indeed",
     "career-scout"
   ],
   "templating": {
@@ -584,6 +688,6 @@
   "timezone": "",
   "title": "Scraper Monitoring",
   "uid": "career-scout-scraper-metrics",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }

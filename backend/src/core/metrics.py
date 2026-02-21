@@ -308,18 +308,20 @@ jobs_in_database_total: Gauge = _get_or_create_gauge(
 )
 
 
-def increment_jobs_created(platform: str) -> None:
+def increment_jobs_created(platform: str, count: int = 1) -> None:
     """Increment job creation counter for a platform.
 
     Args:
         platform: Source platform for the created job.
+        count: Number of created jobs to add.
 
     Raises:
-        ValueError: If platform label is empty.
+        ValueError: If platform label is empty or count is negative.
     """
     _validate_platform(platform)
+    _validate_non_negative(float(count), "count")
 
-    jobs_created_total.labels(platform=platform).inc()
+    jobs_created_total.labels(platform=platform).inc(count)
 
 
 def increment_scraper_runs(platform: str, status: str) -> None:

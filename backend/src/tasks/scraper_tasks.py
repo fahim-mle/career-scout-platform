@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import settings
 from src.core.exceptions import DuplicateJobError, RepositoryError
 from src.core.metrics import (
+    increment_jobs_created,
     increment_jobs_duplicates,
     increment_jobs_errors,
     increment_jobs_scraped,
@@ -28,13 +29,21 @@ from src.core.metrics import (
 from src.celery_app import celery_app
 from src.db.session import get_session
 from src.repositories.job import JobRepository
+from src.scrapers.indeed import (
+    IndeedNonRetryableError,
+    IndeedScraper,
+    IndeedTransientError,
+)
 from src.scrapers.linkedin import (
     LinkedInNonRetryableError,
     LinkedInScraper,
     LinkedInTransientError,
 )
+from src.scrapers.seek import SeekNonRetryableError, SeekScraper, SeekTransientError
 
 MAX_LINKEDIN_SCRAPE_LIMIT = 10
+MAX_SEEK_SCRAPE_LIMIT = 10
+MAX_INDEED_SCRAPE_LIMIT = 10
 MAX_SCRAPER_TASK_RETRIES = 3
 # Fixed retry delay keeps retry timing deterministic.
 DEFAULT_RETRY_COUNTDOWN_SECONDS = 60
@@ -44,8 +53,22 @@ LINKEDIN_PROFILE_CONFIG_PATH = (
     / "config"
     / "linkedin_search_profiles.json"
 )
+SEEK_PROFILE_CONFIG_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "scrapers"
+    / "config"
+    / "seek_search_profiles.json"
+)
+INDEED_PROFILE_CONFIG_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "scrapers"
+    / "config"
+    / "indeed_search_profiles.json"
+)
 MAX_PROFILE_RUNS_PER_TASK = 25
 LINKEDIN_PLATFORM = "linkedin"
+SEEK_PLATFORM = "seek"
+INDEED_PLATFORM = "indeed"
 ENRICHMENT_TASK_NAME = "src.tasks.enrichment_tasks.enrich_unstructured_jobs_task"
 
 
@@ -53,6 +76,7 @@ def _record_scraper_result_metrics(
     platform: str,
     *,
     scraped: int = 0,
+    created: int = 0,
     duplicates: int = 0,
     failed: int = 0,
     updated: int = 0,
@@ -64,6 +88,7 @@ def _record_scraper_result_metrics(
     Args:
         platform: Scraper platform label.
         scraped: Number of scraped jobs.
+        created: Number of newly created jobs.
         duplicates: Number of duplicate jobs.
         failed: Number of persistence failures.
         updated: Number of enriched existing jobs.
@@ -75,6 +100,7 @@ def _record_scraper_result_metrics(
     """
     try:
         increment_jobs_scraped(platform=platform, count=max(scraped, 0))
+        increment_jobs_created(platform=platform, count=max(created, 0))
         increment_jobs_duplicates(platform=platform, count=max(duplicates, 0))
         increment_jobs_errors(platform=platform, count=max(failed, 0))
         increment_jobs_updated(platform=platform, count=max(updated, 0))
@@ -86,6 +112,7 @@ def _record_scraper_result_metrics(
             "Skipped scraper result metrics due to invalid values",
             platform=platform,
             scraped=scraped,
+            created=created,
             duplicates=duplicates,
             failed=failed,
             updated=updated,
@@ -171,19 +198,128 @@ async def _run_linkedin_scrape_and_persist(
 
     Returns:
         Structured scrape and persistence metrics.
-
-    Raises:
-        RuntimeError: If scraper execution fails before persistence loop.
     """
+    return await _run_scrape_and_persist(
+        query=query,
+        location=location,
+        limit=limit,
+        task_id=task_id,
+        platform=LINKEDIN_PLATFORM,
+        scraper_class=LinkedInScraper,
+        rate_limit_seconds=3.0,
+    )
+
+
+async def _run_seek_scrape_and_persist(
+    query: str,
+    location: str,
+    limit: int,
+    task_id: str | None,
+) -> dict[str, Any]:
+    """Scrape Seek jobs and persist new or enriched rows.
+
+    Args:
+        query: Search query for Seek jobs.
+        location: Search location for Seek jobs.
+        limit: Maximum number of jobs to scrape.
+        task_id: Celery task id for structured logging.
+
+    Returns:
+        Structured scrape and persistence metrics.
+    """
+    return await _run_scrape_and_persist(
+        query=query,
+        location=location,
+        limit=limit,
+        task_id=task_id,
+        platform=SEEK_PLATFORM,
+        scraper_class=SeekScraper,
+        rate_limit_seconds=3.0,
+    )
+
+
+async def _run_indeed_scrape_and_persist(
+    query: str,
+    location: str,
+    limit: int,
+    task_id: str | None,
+) -> dict[str, Any]:
+    """Scrape Indeed jobs and persist new or enriched rows.
+
+    Args:
+        query: Search query for Indeed jobs.
+        location: Search location for Indeed jobs.
+        limit: Maximum number of jobs to scrape.
+        task_id: Celery task id for structured logging.
+
+    Returns:
+        Structured scrape and persistence metrics.
+    """
+    return await _run_scrape_and_persist(
+        query=query,
+        location=location,
+        limit=limit,
+        task_id=task_id,
+        platform=INDEED_PLATFORM,
+        scraper_class=IndeedScraper,
+        rate_limit_seconds=5.0,
+    )
+
+
+def _platform_display_name(platform: str) -> str:
+    """Resolve human-readable platform labels for logs.
+
+    Args:
+        platform: Scraper platform key.
+
+    Returns:
+        Display name aligned with existing scraper log messages.
+    """
+    display_names = {
+        LINKEDIN_PLATFORM: "LinkedIn",
+        SEEK_PLATFORM: "Seek",
+        INDEED_PLATFORM: "Indeed",
+    }
+    return display_names.get(platform, platform.capitalize())
+
+
+async def _run_scrape_and_persist(
+    query: str,
+    location: str,
+    limit: int,
+    task_id: str | None,
+    *,
+    platform: str,
+    scraper_class: type[Any],
+    rate_limit_seconds: float,
+) -> dict[str, Any]:
+    """Run scraper and persist scraped jobs with shared orchestration logic.
+
+    Args:
+        query: Search query for scrape execution.
+        location: Search location for scrape execution.
+        limit: Maximum number of jobs to scrape.
+        task_id: Celery task id for structured logging.
+        platform: Scraper platform key.
+        scraper_class: Platform-specific scraper implementation class.
+        rate_limit_seconds: Delay between scraper page actions.
+
+    Returns:
+        Structured scrape and persistence metrics.
+    """
+    platform_name = _platform_display_name(platform)
     logger.info(
-        "Starting LinkedIn scrape orchestration",
+        f"Starting {platform_name} scrape orchestration",
+        platform=platform,
         query=query,
         location=location,
         limit=limit,
         task_id=task_id,
     )
 
-    async with LinkedInScraper(headless=True, rate_limit_seconds=3.0) as scraper:
+    async with scraper_class(
+        headless=True, rate_limit_seconds=rate_limit_seconds
+    ) as scraper:
         scraped_jobs = await scraper.scrape_jobs(
             query=query,
             location=location,
@@ -204,7 +340,8 @@ async def _run_linkedin_scrape_and_persist(
             if not external_id:
                 failed_count += 1
                 logger.warning(
-                    "Skipping scraped job without external_id",
+                    f"Skipping scraped {platform_name} job without external_id",
+                    platform=platform,
                     task_id=task_id,
                 )
                 continue
@@ -212,7 +349,7 @@ async def _run_linkedin_scrape_and_persist(
             try:
                 existing_job = await job_repository.get_by_external_id(
                     external_id=external_id,
-                    platform="linkedin",
+                    platform=platform,
                 )
                 if existing_job is not None:
                     update_payload = _build_job_update_payload(
@@ -239,7 +376,8 @@ async def _run_linkedin_scrape_and_persist(
             except RepositoryError as exc:
                 failed_count += 1
                 logger.error(
-                    "Failed to persist scraped LinkedIn job",
+                    f"Failed to persist scraped {platform_name} job",
+                    platform=platform,
                     external_id=external_id,
                     error=str(exc),
                     task_id=task_id,
@@ -247,7 +385,8 @@ async def _run_linkedin_scrape_and_persist(
             except Exception as exc:
                 failed_count += 1
                 logger.error(
-                    "Unexpected persistence error for scraped LinkedIn job",
+                    f"Unexpected persistence error for scraped {platform_name} job",
+                    platform=platform,
                     external_id=external_id,
                     error=str(exc),
                     task_id=task_id,
@@ -256,7 +395,7 @@ async def _run_linkedin_scrape_and_persist(
 
     result = {
         "status": "success",
-        "platform": "linkedin",
+        "platform": platform,
         "query": query,
         "location": location,
         "scraped": len(scraped_jobs),
@@ -267,7 +406,10 @@ async def _run_linkedin_scrape_and_persist(
         "enrichment_job_ids": sorted(enrichment_job_ids),
     }
     logger.info(
-        "Completed LinkedIn scrape orchestration", task_id=task_id, result=result
+        f"Completed {platform_name} scrape orchestration",
+        platform=platform,
+        task_id=task_id,
+        result=result,
     )
     return result
 
@@ -378,8 +520,18 @@ def _exception_chain(exc: BaseException) -> list[BaseException]:
     return chain
 
 
-def _load_linkedin_search_profiles() -> list[dict[str, Any]]:
-    """Load active LinkedIn search profiles from JSON configuration.
+def _load_search_profiles(
+    *,
+    config_path: Path,
+    platform: str,
+    max_limit: int,
+) -> list[dict[str, Any]]:
+    """Load active search profiles from JSON configuration.
+
+    Args:
+        config_path: JSON config path for profile definitions.
+        platform: Platform label for logging and validation messaging.
+        max_limit: Max scrape limit allowed per profile.
 
     Returns:
         Ordered list of validated active profile dictionaries.
@@ -387,24 +539,29 @@ def _load_linkedin_search_profiles() -> list[dict[str, Any]]:
     Raises:
         ValueError: If configuration file is missing or invalid.
     """
-    if not LINKEDIN_PROFILE_CONFIG_PATH.exists():
-        raise ValueError(
-            f"LinkedIn profile config not found: {LINKEDIN_PROFILE_CONFIG_PATH}"
-        )
+    platform_label = platform.capitalize()
+    if not config_path.exists():
+        raise ValueError(f"{platform_label} profile config not found: {config_path}")
 
     try:
-        payload = json.loads(LINKEDIN_PROFILE_CONFIG_PATH.read_text())
+        payload = json.loads(config_path.read_text())
     except json.JSONDecodeError as exc:
-        raise ValueError("LinkedIn profile config is not valid JSON") from exc
+        raise ValueError(f"{platform_label} profile config is not valid JSON") from exc
 
     profiles = payload.get("profiles")
     if not isinstance(profiles, list):
-        raise ValueError("LinkedIn profile config must include a 'profiles' array")
+        raise ValueError(
+            f"{platform_label} profile config must include a 'profiles' array"
+        )
 
     validated_profiles: list[dict[str, Any]] = []
     for index, profile in enumerate(profiles, start=1):
         if not isinstance(profile, dict):
-            logger.warning("Skipping non-object profile entry", index=index)
+            logger.warning(
+                "Skipping non-object profile entry",
+                index=index,
+                platform=platform,
+            )
             continue
 
         if not profile.get("active", True):
@@ -420,6 +577,7 @@ def _load_linkedin_search_profiles() -> list[dict[str, Any]]:
                 index=index,
                 query=query,
                 location=location,
+                platform=platform,
             )
             continue
 
@@ -430,6 +588,7 @@ def _load_linkedin_search_profiles() -> list[dict[str, Any]]:
                 "Invalid profile limit; defaulting to 5",
                 index=index,
                 requested_limit=requested_limit,
+                platform=platform,
             )
             limit = 5
 
@@ -438,10 +597,11 @@ def _load_linkedin_search_profiles() -> list[dict[str, Any]]:
                 "Invalid non-positive profile limit; defaulting to 5",
                 index=index,
                 requested_limit=requested_limit,
+                platform=platform,
             )
             limit = 5
 
-        bounded_limit = min(limit, MAX_LINKEDIN_SCRAPE_LIMIT)
+        bounded_limit = min(limit, max_limit)
 
         requested_priority = profile.get("priority", index)
         try:
@@ -451,6 +611,7 @@ def _load_linkedin_search_profiles() -> list[dict[str, Any]]:
                 "Invalid profile priority; defaulting to profile order index",
                 index=index,
                 requested_priority=requested_priority,
+                platform=platform,
             )
             priority = index
 
@@ -459,6 +620,7 @@ def _load_linkedin_search_profiles() -> list[dict[str, Any]]:
                 "Invalid non-positive profile priority; defaulting to profile order index",
                 index=index,
                 requested_priority=requested_priority,
+                platform=platform,
             )
             priority = index
 
@@ -476,6 +638,33 @@ def _load_linkedin_search_profiles() -> list[dict[str, Any]]:
     return validated_profiles[:MAX_PROFILE_RUNS_PER_TASK]
 
 
+def _load_linkedin_search_profiles() -> list[dict[str, Any]]:
+    """Load active LinkedIn search profiles from JSON configuration."""
+    return _load_search_profiles(
+        config_path=LINKEDIN_PROFILE_CONFIG_PATH,
+        platform=LINKEDIN_PLATFORM,
+        max_limit=MAX_LINKEDIN_SCRAPE_LIMIT,
+    )
+
+
+def _load_seek_search_profiles() -> list[dict[str, Any]]:
+    """Load active Seek search profiles from JSON configuration."""
+    return _load_search_profiles(
+        config_path=SEEK_PROFILE_CONFIG_PATH,
+        platform=SEEK_PLATFORM,
+        max_limit=MAX_SEEK_SCRAPE_LIMIT,
+    )
+
+
+def _load_indeed_search_profiles() -> list[dict[str, Any]]:
+    """Load active Indeed search profiles from JSON configuration."""
+    return _load_search_profiles(
+        config_path=INDEED_PROFILE_CONFIG_PATH,
+        platform=INDEED_PLATFORM,
+        max_limit=MAX_INDEED_SCRAPE_LIMIT,
+    )
+
+
 def _is_transient_error(exc: BaseException) -> bool:
     """Check if an exception should trigger a retry.
 
@@ -487,6 +676,8 @@ def _is_transient_error(exc: BaseException) -> bool:
     """
     transient_types: tuple[type[BaseException], ...] = (
         LinkedInTransientError,
+        SeekTransientError,
+        IndeedTransientError,
         PlaywrightTimeoutError,
         asyncio.TimeoutError,
         ConnectionError,
@@ -506,6 +697,8 @@ def _is_non_retryable_error(exc: BaseException) -> bool:
     """
     non_retryable_types: tuple[type[BaseException], ...] = (
         LinkedInNonRetryableError,
+        SeekNonRetryableError,
+        IndeedNonRetryableError,
         ValueError,
     )
     return any(isinstance(item, non_retryable_types) for item in _exception_chain(exc))
@@ -593,6 +786,7 @@ def scrape_linkedin_profile_set(self: DatabaseTask) -> dict[str, Any]:
         _record_scraper_result_metrics(
             platform=LINKEDIN_PLATFORM,
             scraped=totals["scraped"],
+            created=totals["created"],
             duplicates=totals["duplicates"],
             failed=totals["failed"],
             updated=totals["updated"],
@@ -647,6 +841,294 @@ def scrape_linkedin_profile_set(self: DatabaseTask) -> dict[str, Any]:
     finally:
         _record_scraper_run_metrics(
             platform=LINKEDIN_PLATFORM,
+            status=run_status,
+            duration_seconds=time.perf_counter() - started_at,
+            task_id=self.request.id,
+        )
+
+
+@celery_app.task(
+    name="src.tasks.scraper_tasks.scrape_seek_profile_set",
+    bind=True,
+    base=DatabaseTask,
+)
+def scrape_seek_profile_set(self: DatabaseTask) -> dict[str, Any]:
+    """Run Seek scraping across configured role/location profiles.
+
+    Returns:
+        Aggregated scrape metrics for all processed profiles.
+    """
+    started_at = time.perf_counter()
+    run_status = "failure"
+    try:
+        if not settings.SCRAPER_ENABLED:
+            run_status = "skipped"
+            logger.warning(
+                "Seek profile set task skipped because scraper is disabled",
+                task_id=self.request.id,
+            )
+            return {
+                "status": "skipped",
+                "platform": SEEK_PLATFORM,
+                "reason": "SCRAPER_ENABLED is false",
+                "profiles_processed": 0,
+            }
+
+        profiles = _load_seek_search_profiles()
+        if not profiles:
+            run_status = "skipped"
+            logger.warning(
+                "No active Seek profiles found in configuration",
+                task_id=self.request.id,
+                config_path=str(SEEK_PROFILE_CONFIG_PATH),
+            )
+            return {
+                "status": "skipped",
+                "platform": SEEK_PLATFORM,
+                "reason": "No active profiles configured",
+                "profiles_processed": 0,
+            }
+
+        totals = {
+            "scraped": 0,
+            "created": 0,
+            "updated": 0,
+            "duplicates": 0,
+            "failed": 0,
+        }
+        per_profile: list[dict[str, Any]] = []
+        enrichment_job_ids: list[int] = []
+
+        for profile in profiles:
+            result = asyncio.run(
+                _run_seek_scrape_and_persist(
+                    query=profile["query"],
+                    location=profile["location"],
+                    limit=profile["limit"],
+                    task_id=self.request.id,
+                )
+            )
+            per_profile.append(
+                {
+                    "id": profile["id"],
+                    "query": profile["query"],
+                    "location": profile["location"],
+                    "limit": profile["limit"],
+                    "result": result,
+                }
+            )
+            totals["scraped"] += int(result.get("scraped", 0))
+            totals["created"] += int(result.get("created", 0))
+            totals["updated"] += int(result.get("updated", 0))
+            totals["duplicates"] += int(result.get("duplicates", 0))
+            totals["failed"] += int(result.get("failed", 0))
+            profile_enrichment_job_ids = [
+                job_id for job_id in result.get("enrichment_job_ids", [])
+            ]
+            enrichment_job_ids.extend(profile_enrichment_job_ids)
+            _enqueue_enrichment_task(
+                platform=SEEK_PLATFORM,
+                job_ids=profile_enrichment_job_ids,
+                task_id=self.request.id,
+            )
+
+        _record_scraper_result_metrics(
+            platform=SEEK_PLATFORM,
+            scraped=totals["scraped"],
+            created=totals["created"],
+            duplicates=totals["duplicates"],
+            failed=totals["failed"],
+            updated=totals["updated"],
+            jobs_in_database=(
+                totals["created"] + totals["duplicates"] + totals["updated"]
+            ),
+            task_id=self.request.id,
+        )
+
+        run_status = "success"
+        return {
+            "status": "success",
+            "platform": SEEK_PLATFORM,
+            "profiles_processed": len(per_profile),
+            "totals": totals,
+            "profiles": per_profile,
+            "enrichment_job_ids": sorted({job_id for job_id in enrichment_job_ids}),
+        }
+    except Exception as exc:
+        if _is_non_retryable_error(exc):
+            logger.error(
+                "Seek profile set task failed with non-retryable error",
+                task_id=self.request.id,
+                error=str(exc),
+            )
+            raise
+
+        if _is_transient_error(exc):
+            logger.warning(
+                "Seek profile set task hit transient error, scheduling retry",
+                task_id=self.request.id,
+                error=str(exc),
+            )
+            raise self.retry(
+                exc=exc,
+                countdown=DEFAULT_RETRY_COUNTDOWN_SECONDS,
+                max_retries=MAX_SCRAPER_TASK_RETRIES,
+            )
+
+        logger.error(
+            "Seek profile set task failed with unexpected non-retryable error",
+            task_id=self.request.id,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise
+    finally:
+        _record_scraper_run_metrics(
+            platform=SEEK_PLATFORM,
+            status=run_status,
+            duration_seconds=time.perf_counter() - started_at,
+            task_id=self.request.id,
+        )
+
+
+@celery_app.task(
+    name="src.tasks.scraper_tasks.scrape_indeed_profile_set",
+    bind=True,
+    base=DatabaseTask,
+)
+def scrape_indeed_profile_set(self: DatabaseTask) -> dict[str, Any]:
+    """Run Indeed scraping across configured role/location profiles.
+
+    Returns:
+        Aggregated scrape metrics for all processed profiles.
+    """
+    started_at = time.perf_counter()
+    run_status = "failure"
+    try:
+        if not settings.SCRAPER_ENABLED:
+            run_status = "skipped"
+            logger.warning(
+                "Indeed profile set task skipped because scraper is disabled",
+                task_id=self.request.id,
+            )
+            return {
+                "status": "skipped",
+                "platform": INDEED_PLATFORM,
+                "reason": "SCRAPER_ENABLED is false",
+                "profiles_processed": 0,
+            }
+
+        profiles = _load_indeed_search_profiles()
+        if not profiles:
+            run_status = "skipped"
+            logger.warning(
+                "No active Indeed profiles found in configuration",
+                task_id=self.request.id,
+                config_path=str(INDEED_PROFILE_CONFIG_PATH),
+            )
+            return {
+                "status": "skipped",
+                "platform": INDEED_PLATFORM,
+                "reason": "No active profiles configured",
+                "profiles_processed": 0,
+            }
+
+        totals = {
+            "scraped": 0,
+            "created": 0,
+            "updated": 0,
+            "duplicates": 0,
+            "failed": 0,
+        }
+        per_profile: list[dict[str, Any]] = []
+        enrichment_job_ids: list[int] = []
+
+        for profile in profiles:
+            result = asyncio.run(
+                _run_indeed_scrape_and_persist(
+                    query=profile["query"],
+                    location=profile["location"],
+                    limit=profile["limit"],
+                    task_id=self.request.id,
+                )
+            )
+            per_profile.append(
+                {
+                    "id": profile["id"],
+                    "query": profile["query"],
+                    "location": profile["location"],
+                    "limit": profile["limit"],
+                    "result": result,
+                }
+            )
+            totals["scraped"] += int(result.get("scraped", 0))
+            totals["created"] += int(result.get("created", 0))
+            totals["updated"] += int(result.get("updated", 0))
+            totals["duplicates"] += int(result.get("duplicates", 0))
+            totals["failed"] += int(result.get("failed", 0))
+            profile_enrichment_job_ids = [
+                job_id for job_id in result.get("enrichment_job_ids", [])
+            ]
+            enrichment_job_ids.extend(profile_enrichment_job_ids)
+            _enqueue_enrichment_task(
+                platform=INDEED_PLATFORM,
+                job_ids=profile_enrichment_job_ids,
+                task_id=self.request.id,
+            )
+
+        _record_scraper_result_metrics(
+            platform=INDEED_PLATFORM,
+            scraped=totals["scraped"],
+            created=totals["created"],
+            duplicates=totals["duplicates"],
+            failed=totals["failed"],
+            updated=totals["updated"],
+            jobs_in_database=(
+                totals["created"] + totals["duplicates"] + totals["updated"]
+            ),
+            task_id=self.request.id,
+        )
+
+        run_status = "success"
+        return {
+            "status": "success",
+            "platform": INDEED_PLATFORM,
+            "profiles_processed": len(per_profile),
+            "totals": totals,
+            "profiles": per_profile,
+            "enrichment_job_ids": sorted({job_id for job_id in enrichment_job_ids}),
+        }
+    except Exception as exc:
+        if _is_non_retryable_error(exc):
+            logger.error(
+                "Indeed profile set task failed with non-retryable error",
+                task_id=self.request.id,
+                error=str(exc),
+            )
+            raise
+
+        if _is_transient_error(exc):
+            logger.warning(
+                "Indeed profile set task hit transient error, scheduling retry",
+                task_id=self.request.id,
+                error=str(exc),
+            )
+            raise self.retry(
+                exc=exc,
+                countdown=DEFAULT_RETRY_COUNTDOWN_SECONDS,
+                max_retries=MAX_SCRAPER_TASK_RETRIES,
+            )
+
+        logger.error(
+            "Indeed profile set task failed with unexpected non-retryable error",
+            task_id=self.request.id,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise
+    finally:
+        _record_scraper_run_metrics(
+            platform=INDEED_PLATFORM,
             status=run_status,
             duration_seconds=time.perf_counter() - started_at,
             task_id=self.request.id,
@@ -721,6 +1203,7 @@ def scrape_linkedin_jobs(
         _record_scraper_result_metrics(
             platform=LINKEDIN_PLATFORM,
             scraped=int(result.get("scraped", 0)),
+            created=int(result.get("created", 0)),
             duplicates=int(result.get("duplicates", 0)),
             failed=int(result.get("failed", 0)),
             updated=int(result.get("updated", 0)),
@@ -778,6 +1261,244 @@ def scrape_linkedin_jobs(
     finally:
         _record_scraper_run_metrics(
             platform=LINKEDIN_PLATFORM,
+            status=run_status,
+            duration_seconds=time.perf_counter() - started_at,
+            task_id=self.request.id,
+        )
+
+
+@celery_app.task(
+    name="src.tasks.scraper_tasks.scrape_seek_jobs",
+    bind=True,
+    base=DatabaseTask,
+)
+def scrape_seek_jobs(
+    self: DatabaseTask,
+    query: str,
+    location: str,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Scrape Seek jobs and persist non-duplicate records."""
+    started_at = time.perf_counter()
+    run_status = "failure"
+    try:
+        if not settings.SCRAPER_ENABLED:
+            run_status = "skipped"
+            logger.warning(
+                "Seek scrape task skipped because scraper is disabled",
+                query=query,
+                location=location,
+                task_id=self.request.id,
+            )
+            return {
+                "status": "skipped",
+                "platform": SEEK_PLATFORM,
+                "query": query,
+                "location": location,
+                "reason": "SCRAPER_ENABLED is false",
+            }
+
+        if limit <= 0:
+            raise ValueError("limit must be greater than 0")
+
+        bounded_limit = min(limit, MAX_SEEK_SCRAPE_LIMIT)
+        if bounded_limit != limit:
+            logger.warning(
+                "Seek scrape limit exceeded max, capping to safe value",
+                requested_limit=limit,
+                bounded_limit=bounded_limit,
+                task_id=self.request.id,
+            )
+
+        result = asyncio.run(
+            _run_seek_scrape_and_persist(
+                query=query,
+                location=location,
+                limit=bounded_limit,
+                task_id=self.request.id,
+            )
+        )
+
+        _record_scraper_result_metrics(
+            platform=SEEK_PLATFORM,
+            scraped=int(result.get("scraped", 0)),
+            created=int(result.get("created", 0)),
+            duplicates=int(result.get("duplicates", 0)),
+            failed=int(result.get("failed", 0)),
+            updated=int(result.get("updated", 0)),
+            jobs_in_database=(
+                int(result.get("created", 0))
+                + int(result.get("duplicates", 0))
+                + int(result.get("updated", 0))
+            ),
+            task_id=self.request.id,
+        )
+        _enqueue_enrichment_task(
+            platform=SEEK_PLATFORM,
+            job_ids=[job_id for job_id in result.get("enrichment_job_ids", [])],
+            task_id=self.request.id,
+        )
+        run_status = "success"
+        return result
+    except Exception as exc:
+        if _is_non_retryable_error(exc):
+            logger.error(
+                "Seek scrape task failed with non-retryable error",
+                query=query,
+                location=location,
+                limit=limit,
+                task_id=self.request.id,
+                error=str(exc),
+            )
+            raise
+
+        if _is_transient_error(exc):
+            logger.warning(
+                "Seek scrape task hit transient error, scheduling retry",
+                query=query,
+                location=location,
+                limit=limit,
+                task_id=self.request.id,
+                error=str(exc),
+            )
+            raise self.retry(
+                exc=exc,
+                countdown=DEFAULT_RETRY_COUNTDOWN_SECONDS,
+                max_retries=MAX_SCRAPER_TASK_RETRIES,
+            )
+
+        logger.error(
+            "Seek scrape task failed with unexpected non-retryable error",
+            query=query,
+            location=location,
+            limit=limit,
+            task_id=self.request.id,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise
+    finally:
+        _record_scraper_run_metrics(
+            platform=SEEK_PLATFORM,
+            status=run_status,
+            duration_seconds=time.perf_counter() - started_at,
+            task_id=self.request.id,
+        )
+
+
+@celery_app.task(
+    name="src.tasks.scraper_tasks.scrape_indeed_jobs",
+    bind=True,
+    base=DatabaseTask,
+)
+def scrape_indeed_jobs(
+    self: DatabaseTask,
+    query: str,
+    location: str,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Scrape Indeed jobs and persist non-duplicate records."""
+    started_at = time.perf_counter()
+    run_status = "failure"
+    try:
+        if not settings.SCRAPER_ENABLED:
+            run_status = "skipped"
+            logger.warning(
+                "Indeed scrape task skipped because scraper is disabled",
+                query=query,
+                location=location,
+                task_id=self.request.id,
+            )
+            return {
+                "status": "skipped",
+                "platform": INDEED_PLATFORM,
+                "query": query,
+                "location": location,
+                "reason": "SCRAPER_ENABLED is false",
+            }
+
+        if limit <= 0:
+            raise ValueError("limit must be greater than 0")
+
+        bounded_limit = min(limit, MAX_INDEED_SCRAPE_LIMIT)
+        if bounded_limit != limit:
+            logger.warning(
+                "Indeed scrape limit exceeded max, capping to safe value",
+                requested_limit=limit,
+                bounded_limit=bounded_limit,
+                task_id=self.request.id,
+            )
+
+        result = asyncio.run(
+            _run_indeed_scrape_and_persist(
+                query=query,
+                location=location,
+                limit=bounded_limit,
+                task_id=self.request.id,
+            )
+        )
+
+        _record_scraper_result_metrics(
+            platform=INDEED_PLATFORM,
+            scraped=int(result.get("scraped", 0)),
+            created=int(result.get("created", 0)),
+            duplicates=int(result.get("duplicates", 0)),
+            failed=int(result.get("failed", 0)),
+            updated=int(result.get("updated", 0)),
+            jobs_in_database=(
+                int(result.get("created", 0))
+                + int(result.get("duplicates", 0))
+                + int(result.get("updated", 0))
+            ),
+            task_id=self.request.id,
+        )
+        _enqueue_enrichment_task(
+            platform=INDEED_PLATFORM,
+            job_ids=[job_id for job_id in result.get("enrichment_job_ids", [])],
+            task_id=self.request.id,
+        )
+        run_status = "success"
+        return result
+    except Exception as exc:
+        if _is_non_retryable_error(exc):
+            logger.error(
+                "Indeed scrape task failed with non-retryable error",
+                query=query,
+                location=location,
+                limit=limit,
+                task_id=self.request.id,
+                error=str(exc),
+            )
+            raise
+
+        if _is_transient_error(exc):
+            logger.warning(
+                "Indeed scrape task hit transient error, scheduling retry",
+                query=query,
+                location=location,
+                limit=limit,
+                task_id=self.request.id,
+                error=str(exc),
+            )
+            raise self.retry(
+                exc=exc,
+                countdown=DEFAULT_RETRY_COUNTDOWN_SECONDS,
+                max_retries=MAX_SCRAPER_TASK_RETRIES,
+            )
+
+        logger.error(
+            "Indeed scrape task failed with unexpected non-retryable error",
+            query=query,
+            location=location,
+            limit=limit,
+            task_id=self.request.id,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise
+    finally:
+        _record_scraper_run_metrics(
+            platform=INDEED_PLATFORM,
             status=run_status,
             duration_seconds=time.perf_counter() - started_at,
             task_id=self.request.id,

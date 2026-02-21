@@ -11,6 +11,8 @@ from typing import Any
 import pytest
 
 from src.scrapers.linkedin import LinkedInChallengeError, LinkedInTransientError
+from src.scrapers.indeed import IndeedNonRetryableError, IndeedTransientError
+from src.scrapers.seek import SeekNonRetryableError, SeekTransientError
 from src.tasks import scraper_tasks
 
 
@@ -39,6 +41,108 @@ class FakeBoundTask:
 
 
 SCRAPE_TASK_RUN = scraper_tasks.scrape_linkedin_jobs.run.__func__  # type: ignore[attr-defined]
+SEEK_SCRAPE_TASK_RUN = scraper_tasks.scrape_seek_jobs.run.__func__  # type: ignore[attr-defined]
+SEEK_PROFILE_SET_TASK_RUN = scraper_tasks.scrape_seek_profile_set.run.__func__  # type: ignore[attr-defined]
+INDEED_SCRAPE_TASK_RUN = scraper_tasks.scrape_indeed_jobs.run.__func__  # type: ignore[attr-defined]
+INDEED_PROFILE_SET_TASK_RUN = scraper_tasks.scrape_indeed_profile_set.run.__func__  # type: ignore[attr-defined]
+
+
+def test_record_scraper_result_metrics_increments_jobs_created(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Result metric helper emits jobs_created_total using created count."""
+    created_calls: list[dict[str, Any]] = []
+
+    def fake_increment_jobs_created(platform: str, count: int = 1) -> None:
+        created_calls.append({"platform": platform, "count": count})
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "increment_jobs_created",
+        fake_increment_jobs_created,
+    )
+    monkeypatch.setattr(
+        scraper_tasks,
+        "increment_jobs_scraped",
+        lambda platform, count=1: None,
+    )
+    monkeypatch.setattr(
+        scraper_tasks,
+        "increment_jobs_duplicates",
+        lambda platform, count=1: None,
+    )
+    monkeypatch.setattr(
+        scraper_tasks,
+        "increment_jobs_errors",
+        lambda platform, count=1: None,
+    )
+    monkeypatch.setattr(
+        scraper_tasks,
+        "increment_jobs_updated",
+        lambda platform, count=1: None,
+    )
+
+    scraper_tasks._record_scraper_result_metrics(
+        platform="linkedin",
+        scraped=5,
+        created=2,
+        duplicates=1,
+        failed=0,
+        updated=1,
+        jobs_in_database=4,
+        task_id="task-123",
+    )
+
+    assert created_calls == [{"platform": "linkedin", "count": 2}]
+
+
+def test_scrape_linkedin_jobs_passes_created_count_to_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LinkedIn task forwards created count into metric recording helper."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def fake_scrape_and_persist(**_kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "platform": "linkedin",
+            "query": "python",
+            "location": "remote",
+            "scraped": 3,
+            "created": 2,
+            "updated": 0,
+            "duplicates": 1,
+            "failed": 0,
+            "enrichment_job_ids": [],
+        }
+
+    metric_payloads: list[dict[str, Any]] = []
+
+    def fake_record_scraper_result_metrics(**kwargs: Any) -> None:
+        metric_payloads.append(kwargs)
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_linkedin_scrape_and_persist",
+        fake_scrape_and_persist,
+    )
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_record_scraper_result_metrics",
+        fake_record_scraper_result_metrics,
+    )
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_enqueue_enrichment_task",
+        lambda **_kwargs: None,
+    )
+
+    result = SCRAPE_TASK_RUN(task, query="python", location="remote", limit=5)
+
+    assert result["status"] == "success"
+    assert len(metric_payloads) == 1
+    assert metric_payloads[0]["created"] == 2
 
 
 def test_scrape_linkedin_jobs_returns_skipped_when_scraper_disabled(
@@ -184,6 +288,84 @@ def test_load_linkedin_search_profiles_invalid_priority_falls_back_to_index(
     assert profiles[1]["priority"] == 3
 
 
+def test_load_seek_search_profiles_invalid_priority_falls_back_to_index(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Seek profile loader falls back to profile index on invalid priority."""
+    config_path = tmp_path / "seek_profiles.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "id": "alpha",
+                        "query": "python",
+                        "location": "brisbane",
+                        "limit": 3,
+                        "priority": "invalid",
+                    },
+                    {
+                        "id": "beta",
+                        "query": "backend",
+                        "location": "remote",
+                        "limit": 4,
+                        "priority": 3,
+                    },
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr(scraper_tasks, "SEEK_PROFILE_CONFIG_PATH", config_path)
+
+    profiles = scraper_tasks._load_seek_search_profiles()
+
+    assert len(profiles) == 2
+    assert profiles[0]["id"] == "alpha"
+    assert profiles[0]["priority"] == 1
+    assert profiles[1]["id"] == "beta"
+    assert profiles[1]["priority"] == 3
+
+
+def test_load_indeed_search_profiles_invalid_priority_falls_back_to_index(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Indeed profile loader falls back to profile index on invalid priority."""
+    config_path = tmp_path / "indeed_profiles.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "id": "alpha",
+                        "query": "python",
+                        "location": "brisbane",
+                        "limit": 3,
+                        "priority": "invalid",
+                    },
+                    {
+                        "id": "beta",
+                        "query": "backend",
+                        "location": "remote",
+                        "limit": 4,
+                        "priority": 3,
+                    },
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr(scraper_tasks, "INDEED_PROFILE_CONFIG_PATH", config_path)
+
+    profiles = scraper_tasks._load_indeed_search_profiles()
+
+    assert len(profiles) == 2
+    assert profiles[0]["id"] == "alpha"
+    assert profiles[0]["priority"] == 1
+    assert profiles[1]["id"] == "beta"
+    assert profiles[1]["priority"] == 3
+
+
 def test_build_job_update_payload_only_sets_missing_fields() -> None:
     """Existing values must not be overwritten by enrichment update helper."""
 
@@ -304,6 +486,368 @@ def test_scrape_linkedin_jobs_does_not_trigger_enrichment_without_candidates(
 
     assert result["status"] == "success"
     assert enqueue_calls == []
+
+
+def test_scrape_seek_jobs_returns_skipped_when_scraper_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seek task returns skipped status when kill switch is disabled."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", False)
+
+    result = SEEK_SCRAPE_TASK_RUN(
+        task,
+        query="python",
+        location="brisbane",
+        limit=5,
+    )
+
+    assert result["status"] == "skipped"
+    assert result["platform"] == "seek"
+    assert task.retry_calls == []
+
+
+def test_scrape_seek_jobs_retries_on_transient_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seek transient scraper failures trigger Celery retry."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def raise_transient(**_kwargs: Any) -> dict[str, Any]:
+        raise SeekTransientError("seek timeout")
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_seek_scrape_and_persist",
+        raise_transient,
+    )
+
+    with pytest.raises(RetryInvoked, match="retry called"):
+        SEEK_SCRAPE_TASK_RUN(
+            task,
+            query="python",
+            location="brisbane",
+            limit=5,
+        )
+
+    assert len(task.retry_calls) == 1
+    retry_payload = task.retry_calls[0]
+    assert retry_payload["countdown"] == scraper_tasks.DEFAULT_RETRY_COUNTDOWN_SECONDS
+    assert retry_payload["max_retries"] == scraper_tasks.MAX_SCRAPER_TASK_RETRIES
+    assert isinstance(retry_payload["exc"], SeekTransientError)
+
+
+def test_scrape_seek_jobs_raises_non_retryable_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seek non-retryable failures should not trigger retry."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def raise_non_retryable(**_kwargs: Any) -> dict[str, Any]:
+        raise SeekNonRetryableError("blocked")
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_seek_scrape_and_persist",
+        raise_non_retryable,
+    )
+
+    with pytest.raises(SeekNonRetryableError, match="blocked"):
+        SEEK_SCRAPE_TASK_RUN(
+            task,
+            query="python",
+            location="brisbane",
+            limit=5,
+        )
+
+    assert task.retry_calls == []
+
+
+def test_scrape_seek_jobs_triggers_enrichment_when_job_ids_exist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seek task enqueues enrichment for created or updated job ids."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def fake_scrape_and_persist(**_kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "platform": "seek",
+            "query": "python",
+            "location": "brisbane",
+            "scraped": 2,
+            "created": 1,
+            "updated": 1,
+            "duplicates": 0,
+            "failed": 0,
+            "enrichment_job_ids": [31, 41],
+        }
+
+    enqueue_calls: list[dict[str, Any]] = []
+
+    def fake_send_task(name: str, kwargs: dict[str, Any], countdown: int) -> None:
+        enqueue_calls.append({"name": name, "kwargs": kwargs, "countdown": countdown})
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_seek_scrape_and_persist",
+        fake_scrape_and_persist,
+    )
+    monkeypatch.setattr(scraper_tasks.celery_app, "send_task", fake_send_task)
+
+    result = SEEK_SCRAPE_TASK_RUN(
+        task,
+        query="python",
+        location="brisbane",
+        limit=5,
+    )
+
+    assert result["status"] == "success"
+    assert len(enqueue_calls) == 1
+    enqueue_call = enqueue_calls[0]
+    assert enqueue_call["name"] == scraper_tasks.ENRICHMENT_TASK_NAME
+    assert enqueue_call["kwargs"] == {"platform": "seek", "job_ids": [31, 41]}
+    assert enqueue_call["countdown"] == 5
+
+
+def test_scrape_seek_profile_set_triggers_enrichment_when_job_ids_exist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seek profile-set task enqueues enrichment from aggregated profile ids."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def fake_scrape_and_persist(**_kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "platform": "seek",
+            "scraped": 2,
+            "created": 1,
+            "updated": 1,
+            "duplicates": 0,
+            "failed": 0,
+            "enrichment_job_ids": [131, 141],
+        }
+
+    enqueue_calls: list[dict[str, Any]] = []
+
+    def fake_send_task(name: str, kwargs: dict[str, Any], countdown: int) -> None:
+        enqueue_calls.append({"name": name, "kwargs": kwargs, "countdown": countdown})
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_load_seek_search_profiles",
+        lambda: [
+            {
+                "id": "seek-1",
+                "query": "python",
+                "location": "brisbane",
+                "limit": 2,
+                "priority": 1,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_seek_scrape_and_persist",
+        fake_scrape_and_persist,
+    )
+    monkeypatch.setattr(scraper_tasks.celery_app, "send_task", fake_send_task)
+
+    result = SEEK_PROFILE_SET_TASK_RUN(task)
+
+    assert result["status"] == "success"
+    assert result["profiles_processed"] == 1
+    assert result["enrichment_job_ids"] == [131, 141]
+    assert len(enqueue_calls) == 1
+    enqueue_call = enqueue_calls[0]
+    assert enqueue_call["name"] == scraper_tasks.ENRICHMENT_TASK_NAME
+    assert enqueue_call["kwargs"] == {"platform": "seek", "job_ids": [131, 141]}
+    assert enqueue_call["countdown"] == 5
+
+
+def test_scrape_indeed_jobs_returns_skipped_when_scraper_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Indeed task returns skipped status when kill switch is disabled."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", False)
+
+    result = INDEED_SCRAPE_TASK_RUN(
+        task,
+        query="python",
+        location="brisbane",
+        limit=5,
+    )
+
+    assert result["status"] == "skipped"
+    assert result["platform"] == "indeed"
+    assert task.retry_calls == []
+
+
+def test_scrape_indeed_jobs_retries_on_transient_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Indeed transient scraper failures trigger Celery retry."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def raise_transient(**_kwargs: Any) -> dict[str, Any]:
+        raise IndeedTransientError("indeed timeout")
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_indeed_scrape_and_persist",
+        raise_transient,
+    )
+
+    with pytest.raises(RetryInvoked, match="retry called"):
+        INDEED_SCRAPE_TASK_RUN(
+            task,
+            query="python",
+            location="brisbane",
+            limit=5,
+        )
+
+    assert len(task.retry_calls) == 1
+    retry_payload = task.retry_calls[0]
+    assert retry_payload["countdown"] == scraper_tasks.DEFAULT_RETRY_COUNTDOWN_SECONDS
+    assert retry_payload["max_retries"] == scraper_tasks.MAX_SCRAPER_TASK_RETRIES
+    assert isinstance(retry_payload["exc"], IndeedTransientError)
+
+
+def test_scrape_indeed_jobs_raises_non_retryable_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Indeed non-retryable failures should not trigger retry."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def raise_non_retryable(**_kwargs: Any) -> dict[str, Any]:
+        raise IndeedNonRetryableError("blocked")
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_indeed_scrape_and_persist",
+        raise_non_retryable,
+    )
+
+    with pytest.raises(IndeedNonRetryableError, match="blocked"):
+        INDEED_SCRAPE_TASK_RUN(
+            task,
+            query="python",
+            location="brisbane",
+            limit=5,
+        )
+
+    assert task.retry_calls == []
+
+
+def test_scrape_indeed_jobs_triggers_enrichment_when_job_ids_exist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Indeed task enqueues enrichment for created or updated job ids."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def fake_scrape_and_persist(**_kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "platform": "indeed",
+            "query": "python",
+            "location": "brisbane",
+            "scraped": 2,
+            "created": 1,
+            "updated": 1,
+            "duplicates": 0,
+            "failed": 0,
+            "enrichment_job_ids": [81, 91],
+        }
+
+    enqueue_calls: list[dict[str, Any]] = []
+
+    def fake_send_task(name: str, kwargs: dict[str, Any], countdown: int) -> None:
+        enqueue_calls.append({"name": name, "kwargs": kwargs, "countdown": countdown})
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_indeed_scrape_and_persist",
+        fake_scrape_and_persist,
+    )
+    monkeypatch.setattr(scraper_tasks.celery_app, "send_task", fake_send_task)
+
+    result = INDEED_SCRAPE_TASK_RUN(
+        task,
+        query="python",
+        location="brisbane",
+        limit=5,
+    )
+
+    assert result["status"] == "success"
+    assert len(enqueue_calls) == 1
+    enqueue_call = enqueue_calls[0]
+    assert enqueue_call["name"] == scraper_tasks.ENRICHMENT_TASK_NAME
+    assert enqueue_call["kwargs"] == {"platform": "indeed", "job_ids": [81, 91]}
+    assert enqueue_call["countdown"] == 5
+
+
+def test_scrape_indeed_profile_set_triggers_enrichment_when_job_ids_exist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Indeed profile-set task enqueues enrichment from aggregated profile ids."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def fake_scrape_and_persist(**_kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "platform": "indeed",
+            "scraped": 2,
+            "created": 1,
+            "updated": 1,
+            "duplicates": 0,
+            "failed": 0,
+            "enrichment_job_ids": [231, 241],
+        }
+
+    enqueue_calls: list[dict[str, Any]] = []
+
+    def fake_send_task(name: str, kwargs: dict[str, Any], countdown: int) -> None:
+        enqueue_calls.append({"name": name, "kwargs": kwargs, "countdown": countdown})
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_load_indeed_search_profiles",
+        lambda: [
+            {
+                "id": "indeed-1",
+                "query": "python",
+                "location": "brisbane",
+                "limit": 2,
+                "priority": 1,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_indeed_scrape_and_persist",
+        fake_scrape_and_persist,
+    )
+    monkeypatch.setattr(scraper_tasks.celery_app, "send_task", fake_send_task)
+
+    result = INDEED_PROFILE_SET_TASK_RUN(task)
+
+    assert result["status"] == "success"
+    assert result["profiles_processed"] == 1
+    assert result["enrichment_job_ids"] == [231, 241]
+    assert len(enqueue_calls) == 1
+    enqueue_call = enqueue_calls[0]
+    assert enqueue_call["name"] == scraper_tasks.ENRICHMENT_TASK_NAME
+    assert enqueue_call["kwargs"] == {"platform": "indeed", "job_ids": [231, 241]}
+    assert enqueue_call["countdown"] == 5
 
 
 def test_run_linkedin_scrape_and_persist_does_not_count_none_updates(

@@ -50,6 +50,16 @@ celery_app.conf.update(
             "schedule": crontab(hour="*/4", minute=40),
             "kwargs": {"platform": "linkedin"},
         },
+        "seek-scrape-every-4h": {
+            "task": "src.tasks.scraper_tasks.scrape_seek_profile_set",
+            # Run 15 minutes after LinkedIn scrape.
+            "schedule": crontab(hour="*/4", minute=15),
+        },
+        "indeed-scrape-every-4h": {
+            "task": "src.tasks.scraper_tasks.scrape_indeed_profile_set",
+            # Run 15 minutes after Seek scrape.
+            "schedule": crontab(hour="*/4", minute=30),
+        },
     },
 )
 
