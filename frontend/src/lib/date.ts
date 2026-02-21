@@ -18,3 +18,19 @@ export const formatDisplayDate = (
 
   return date.toLocaleDateString();
 };
+
+export const formatDisplayDateTime = (
+  value: string | null | undefined,
+  fallback = 'Unknown'
+): string => {
+  if (!value) {
+    return fallback;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return fallback;
+  }
+
+  return date.toLocaleString();
+};

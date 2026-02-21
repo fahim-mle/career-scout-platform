@@ -12,7 +12,7 @@ import {
 import { useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useJobs } from '../../hooks/useJobs';
-import { formatDisplayDate } from '../../lib/date';
+import { formatDisplayDate, formatDisplayDateTime } from '../../lib/date';
 
 const JobDetails = () => {
   const { id } = useParams<{ id: string }>();
@@ -151,7 +151,7 @@ const JobDetails = () => {
              <div className="glass-card p-4 flex flex-col items-center justify-center text-center space-y-1">
               <ShieldCheck className="w-4 h-4 text-indigo-400 mb-1" />
               <span className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Enrichment</span>
-              <span className="text-sm font-semibold text-white capitalize">{job.enrichmentStatus ? job.enrichmentStatus.replace('_', ' ') : 'Pending'}</span>
+              <span className="text-sm font-semibold text-white capitalize">{job.enrichmentStatus ? job.enrichmentStatus.replace(/_/g, ' ') : 'Pending'}</span>
             </div>
           </div>
 
@@ -201,7 +201,7 @@ const JobDetails = () => {
                 <div>
                   <p className="text-xs font-bold text-slate-500 mb-0.5 uppercase">Scraped At</p>
                   <p className="text-sm text-slate-300">
-                    {new Date(job.scrapedAt).toLocaleString()}
+                    {formatDisplayDateTime(job.scrapedAt)}
                   </p>
                 </div>
               </div>
