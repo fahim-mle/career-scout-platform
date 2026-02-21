@@ -52,8 +52,18 @@ celery_app.conf.update(
         },
         "seek-scrape-every-4h": {
             "task": "src.tasks.scraper_tasks.scrape_seek_jobs",
-            # Offset from existing 00/20/40 windows to avoid overlap.
-            "schedule": crontab(hour="*/4", minute=50),
+            # Run 15 minutes after LinkedIn scrape.
+            "schedule": crontab(hour="*/4", minute=15),
+            "kwargs": {
+                "query": "Software Engineer",
+                "location": "Brisbane QLD",
+                "limit": 10,
+            },
+        },
+        "indeed-scrape-every-4h": {
+            "task": "src.tasks.scraper_tasks.scrape_indeed_jobs",
+            # Run 15 minutes after Seek scrape.
+            "schedule": crontab(hour="*/4", minute=30),
             "kwargs": {
                 "query": "Software Engineer",
                 "location": "Brisbane QLD",
