@@ -69,6 +69,9 @@ class LinkedInScraper(BaseScraper):
         "Looking for talent? Post a job",
         "About the company",
     )
+    DESCRIPTION_TRAILING_MORE_PATTERN = re.compile(
+        r"(?:\.\.\.|…)\s*more\s*$", re.IGNORECASE
+    )
     JOB_CARD_SELECTORS = (
         "ul.jobs-search__results-list li",
         "ul.scaffold-layout__list-container li.jobs-search-results__list-item",
@@ -554,13 +557,17 @@ class LinkedInScraper(BaseScraper):
         if not description_full:
             return None
 
-        if len(description_full) <= cls.SHORT_DESCRIPTION_MAX_LENGTH:
-            return description_full
+        summary_text = cls._normalize_text(description_full)
+        if not summary_text:
+            return None
 
-        cutoff = description_full.rfind(" ", 0, cls.SHORT_DESCRIPTION_MAX_LENGTH)
+        if len(summary_text) <= cls.SHORT_DESCRIPTION_MAX_LENGTH:
+            return summary_text
+
+        cutoff = summary_text.rfind(" ", 0, cls.SHORT_DESCRIPTION_MAX_LENGTH)
         if cutoff <= 0:
             cutoff = cls.SHORT_DESCRIPTION_MAX_LENGTH
-        return f"{description_full[:cutoff].rstrip()}..."
+        return f"{summary_text[:cutoff].rstrip()}..."
 
     @classmethod
     def _sanitize_description_text(cls, value: str | None) -> str | None:
@@ -568,7 +575,7 @@ class LinkedInScraper(BaseScraper):
         if not value:
             return None
 
-        normalized = cls._normalize_text(value)
+        normalized = cls._normalize_description_text(value)
         if not normalized:
             return None
 
@@ -580,7 +587,9 @@ class LinkedInScraper(BaseScraper):
             if marker in normalized:
                 normalized = normalized[: normalized.find(marker)]
 
-        normalized = cls._normalize_text(normalized)
+        normalized = cls.DESCRIPTION_TRAILING_MORE_PATTERN.sub("", normalized).strip()
+
+        normalized = cls._normalize_description_text(normalized)
         if not normalized:
             return None
 
@@ -591,6 +600,20 @@ class LinkedInScraper(BaseScraper):
         if cutoff <= 0:
             cutoff = cls.MAX_DESCRIPTION_FULL_LENGTH
         return normalized[:cutoff].rstrip()
+
+    @classmethod
+    def _normalize_description_text(cls, value: str) -> str | None:
+        """Normalize text while keeping line breaks for section readability."""
+        raw_lines = value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        normalized_lines: list[str] = []
+        for line in raw_lines:
+            compact = cls._normalize_text(line)
+            if compact:
+                normalized_lines.append(compact)
+
+        if not normalized_lines:
+            return None
+        return "\n".join(normalized_lines)
 
     @classmethod
     def _build_search_url(cls, query: str, location: str) -> str:

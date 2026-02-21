@@ -100,6 +100,7 @@ class EnrichedJobResponse(BaseModel):
     enrichment_status: str | None = None
     enrichment_version: str | None = None
     enrichment_updated_at: datetime | None = None
+    description_sections: list[dict[str, Any]] | None = None
     relevance_score: int | None = None
 
     model_config = ConfigDict(from_attributes=True)

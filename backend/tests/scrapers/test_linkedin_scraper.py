@@ -38,3 +38,14 @@ def test_build_short_description_truncates_long_text() -> None:
     assert result is not None
     assert len(result) <= LinkedInScraper.SHORT_DESCRIPTION_MAX_LENGTH + 3
     assert result.endswith("...")
+
+
+def test_sanitize_description_removes_trailing_more_artifact() -> None:
+    """Sanitizer removes trailing LinkedIn expansion affordance text."""
+    raw = "About the job Build APIs with Python and FastAPI. … more"
+
+    result = LinkedInScraper._sanitize_description_text(raw)
+
+    assert result is not None
+    assert not result.endswith("… more")
+    assert result.endswith("FastAPI.")

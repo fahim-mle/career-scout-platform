@@ -70,6 +70,9 @@ class JobEnrichment(BaseModel):
     confidence_by_field: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True
     )
+    description_sections: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONB, nullable=True
+    )
     enriched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

@@ -44,6 +44,26 @@ SALARY_SINGLE_PATTERN = re.compile(
     r"(?P<currency>\$|a\$|aud|usd)\s*(?P<amount>\d[\d,]*(?:\.\d+)?)",
     re.IGNORECASE,
 )
+SECTION_HEADER_KEYWORDS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\babout(?:\s+the\s+job)?\b", re.IGNORECASE), "About"),
+    (
+        re.compile(
+            r"\b(responsibilities|what\s+you(?:'|’)ll\s+do|duties|role\s+overview)\b",
+            re.IGNORECASE,
+        ),
+        "Responsibilities",
+    ),
+    (
+        re.compile(
+            r"\b(requirements|qualifications|what\s+you(?:'|’)ll\s+need|skills|experience)\b",
+            re.IGNORECASE,
+        ),
+        "Requirements",
+    ),
+    (re.compile(r"\b(benefits|perks|what\s+we\s+offer)\b", re.IGNORECASE), "Benefits"),
+    (re.compile(r"\b(company|about\s+us|who\s+we\s+are)\b", re.IGNORECASE), "Company"),
+)
+LINE_BULLET_PREFIX = re.compile(r"^(?:[-*•]|\d+[\.)])\s+")
 
 
 @lru_cache(maxsize=1)
@@ -479,6 +499,96 @@ class JobEnrichmentService:
                 "Failed to extract salary range from description."
             ) from exc
 
+    def extract_description_sections(
+        self,
+        text: str,
+    ) -> list[dict[str, Any]]:
+        """Split raw description text into readable section groups.
+
+        Args:
+            text: Raw description text.
+
+        Returns:
+            Ordered list of section dictionaries with ``title`` and ``items``.
+        """
+        if not text.strip():
+            return []
+
+        lines = self._normalize_description_lines(text)
+        if not lines:
+            return []
+
+        sections: list[dict[str, Any]] = []
+        active_section = {"title": "Overview", "items": []}
+
+        for line in lines:
+            maybe_title = self._match_section_heading(line)
+            if maybe_title is not None:
+                if active_section["items"]:
+                    sections.append(active_section)
+                active_section = {"title": maybe_title, "items": []}
+                continue
+
+            active_section["items"].append(self._strip_bullet_prefix(line))
+
+        if active_section["items"]:
+            sections.append(active_section)
+
+        deduped_sections: list[dict[str, Any]] = []
+        for section in sections:
+            items = section.get("items", [])
+            if not isinstance(items, list):
+                continue
+
+            deduped_items: list[str] = []
+            last = ""
+            for item in items:
+                if not isinstance(item, str) or not item.strip():
+                    continue
+                normalized_item = item.strip()
+                if normalized_item.casefold() == last.casefold():
+                    continue
+                deduped_items.append(normalized_item)
+                last = normalized_item
+
+            if deduped_items:
+                deduped_sections.append(
+                    {
+                        "title": section.get("title", "Overview"),
+                        "items": deduped_items,
+                    }
+                )
+
+        return deduped_sections
+
+    def _normalize_description_lines(self, text: str) -> list[str]:
+        """Normalize description text while preserving line-level structure."""
+        raw_lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        lines: list[str] = []
+        for raw_line in raw_lines:
+            compact = re.sub(r"\s+", " ", raw_line).strip()
+            if compact:
+                lines.append(compact)
+        return lines
+
+    def _match_section_heading(self, line: str) -> str | None:
+        """Match a normalized section title from a candidate line."""
+        heading = line.strip().rstrip(":")
+        if len(heading) > 80:
+            return None
+        if heading.endswith("."):
+            return None
+
+        for pattern, normalized_title in SECTION_HEADER_KEYWORDS:
+            if pattern.search(heading):
+                return normalized_title
+
+        return None
+
+    def _strip_bullet_prefix(self, line: str) -> str:
+        """Remove common bullet/number prefixes from description lines."""
+        return LINE_BULLET_PREFIX.sub("", line).strip()
+
     def build_enrichment_payload(self, job: Job) -> dict[str, Any]:
         """Build processed enrichment payload from raw job text.
 
@@ -527,6 +637,16 @@ class JobEnrichmentService:
         salary_range = self.extract_salary_range_from_text(combined_text)
         if salary_range:
             payload.update(self._salary_range_to_enrichment_fields(salary_range))
+
+        description_text = ""
+        if isinstance(getattr(job, "description_full", None), str):
+            description_text = job.description_full or ""
+        elif isinstance(getattr(job, "description_short", None), str):
+            description_text = job.description_short or ""
+
+        description_sections = self.extract_description_sections(description_text)
+        if description_sections:
+            payload["description_sections"] = description_sections
 
         payload["status"] = self._determine_status(payload)
 

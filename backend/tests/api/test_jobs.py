@@ -39,6 +39,7 @@ ENRICHED_REQUIRED_FIELDS = {
     "enrichment_status",
     "enrichment_version",
     "enrichment_updated_at",
+    "description_sections",
     "relevance_score",
 }
 
@@ -116,6 +117,7 @@ class TestJobsAPI:
         assert listed_job["enrichment_status"] is None
         assert listed_job["enrichment_version"] is None
         assert listed_job["enrichment_updated_at"] is None
+        assert listed_job["description_sections"] is None
 
     @pytest.mark.asyncio
     async def test_list_jobs_with_data(self, client: AsyncClient) -> None:
@@ -137,6 +139,7 @@ class TestJobsAPI:
         assert body[0]["enrichment_status"] is None
         assert body[0]["enrichment_version"] is None
         assert body[0]["enrichment_updated_at"] is None
+        assert body[0]["description_sections"] is None
 
     @pytest.mark.asyncio
     async def test_scraped_raw_jobs_returns_raw_schema(
