@@ -732,7 +732,7 @@ class LinkedInScraper(BaseScraper):
 
     @staticmethod
     def _normalize_text(value: str) -> str | None:
-        """Normalize text by collapsing whitespace.
+        """Normalize text by collapsing whitespace and safe title artifacts.
 
         Args:
             value: Raw text value.
@@ -741,7 +741,39 @@ class LinkedInScraper(BaseScraper):
             Normalized string or ``None`` when the value is empty.
         """
         normalized = " ".join(value.split())
-        return normalized if normalized else None
+        if not normalized:
+            return None
+
+        return LinkedInScraper._collapse_adjacent_duplicate_phrase(normalized)
+
+    @staticmethod
+    def _collapse_adjacent_duplicate_phrase(value: str) -> str:
+        """Collapse exact adjacent repeated phrase artifacts.
+
+        This is intentionally conservative and only collapses full-string patterns
+        where the first half and second half are exact token-by-token matches,
+        such as ``"Software Engineer Software Engineer"``.
+
+        Args:
+            value: Whitespace-normalized text.
+
+        Returns:
+            Deduplicated phrase when an exact adjacent duplicate artifact is
+            detected, otherwise the original value.
+        """
+        try:
+            tokens = value.split(" ")
+            token_count = len(tokens)
+            if token_count < 2 or token_count % 2 != 0:
+                return value
+
+            midpoint = token_count // 2
+            if tokens[:midpoint] == tokens[midpoint:]:
+                return " ".join(tokens[:midpoint])
+
+            return value
+        except Exception:
+            return value
 
     async def _assert_no_challenge(self, stage: str) -> None:
         """Raise when LinkedIn challenge/captcha cues are detected.

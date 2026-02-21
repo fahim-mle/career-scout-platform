@@ -406,6 +406,44 @@ def test_build_job_update_payload_empty_when_no_new_values() -> None:
     assert result == {}
 
 
+def test_build_job_update_payload_updates_title_when_duplicate_artifact_corrected() -> (
+    None
+):
+    """Existing duplicated title artifact should be corrected from new scrape."""
+
+    existing = SimpleNamespace(
+        title="Software Engineer Software Engineer",
+        description_full="full",
+        description_short="short",
+        job_type="Contract",
+    )
+    scraped = {
+        "title": "Software Engineer",
+    }
+
+    result = scraper_tasks._build_job_update_payload(existing, scraped)
+
+    assert result == {"title": "Software Engineer"}
+
+
+def test_build_job_update_payload_does_not_update_distinct_existing_title() -> None:
+    """Distinct titles must not be overwritten by incoming values."""
+
+    existing = SimpleNamespace(
+        title="Senior Software Engineer",
+        description_full="full",
+        description_short="short",
+        job_type="Contract",
+    )
+    scraped = {
+        "title": "Software Engineer",
+    }
+
+    result = scraper_tasks._build_job_update_payload(existing, scraped)
+
+    assert result == {}
+
+
 def test_scrape_linkedin_jobs_triggers_enrichment_when_job_ids_exist(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

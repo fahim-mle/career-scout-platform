@@ -49,3 +49,21 @@ def test_sanitize_description_removes_trailing_more_artifact() -> None:
     assert result is not None
     assert not result.endswith("… more")
     assert result.endswith("FastAPI.")
+
+
+def test_normalize_text_deduplicates_adjacent_repeated_title_phrase() -> None:
+    """Title normalization should collapse repeated adjacent title phrases."""
+    raw_title = "Software Engineer Software Engineer"
+
+    result = LinkedInScraper._normalize_text(raw_title)
+
+    assert result == "Software Engineer"
+
+
+def test_normalize_text_keeps_non_duplicate_title_unchanged() -> None:
+    """Title normalization should keep distinct titles unchanged."""
+    raw_title = "Senior Software Engineer"
+
+    result = LinkedInScraper._normalize_text(raw_title)
+
+    assert result == "Senior Software Engineer"

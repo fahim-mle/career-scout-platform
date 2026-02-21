@@ -157,14 +157,14 @@ def _build_job_update_payload(
     existing_job: Any,
     scraped_payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """Build a safe update payload for selected LinkedIn enrichments.
+    """Build a safe update payload for selected scraper enrichments.
 
     Args:
         existing_job: Existing ORM job entity from repository lookup.
         scraped_payload: Newly scraped payload for the same external id.
 
     Returns:
-        Field map containing only missing description/job-type values.
+        Field map containing enrichment updates that are safe to apply.
     """
     enrichable_fields = (
         "description_full",
@@ -179,7 +179,45 @@ def _build_job_update_payload(
         if current_value is None and new_value is not None:
             updates[field] = new_value
 
+    existing_title = getattr(existing_job, "title", None)
+    incoming_title = scraped_payload.get("title")
+    if _should_update_title_from_duplicate_artifact(
+        existing_title=existing_title,
+        incoming_title=incoming_title,
+    ):
+        updates["title"] = incoming_title
+
     return updates
+
+
+def _should_update_title_from_duplicate_artifact(
+    *,
+    existing_title: str | None,
+    incoming_title: str | None,
+) -> bool:
+    """Determine whether a persisted duplicate title should be corrected.
+
+    The correction is intentionally conservative and only allows updates when the
+    existing title is an exact adjacent duplicate phrase artifact and the incoming
+    title matches the collapsed, corrected value.
+    """
+    if not existing_title or not incoming_title:
+        return False
+
+    compact_existing = " ".join(existing_title.split())
+    compact_incoming = " ".join(incoming_title.split())
+    if not compact_existing or not compact_incoming:
+        return False
+    if compact_existing == compact_incoming:
+        return False
+
+    collapsed_existing = LinkedInScraper._collapse_adjacent_duplicate_phrase(
+        compact_existing
+    )
+    return (
+        collapsed_existing != compact_existing
+        and collapsed_existing == compact_incoming
+    )
 
 
 async def _run_linkedin_scrape_and_persist(
