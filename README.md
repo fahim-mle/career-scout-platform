@@ -62,7 +62,24 @@ For faster UI iteration (without waiting on full health dependency chains), you 
 docker compose up -d frontend backend postgres redis
 ```
 
-For non-Docker frontend development, set `VITE_API_TARGET` in `frontend/.env` (for example `VITE_API_TARGET=http://localhost:8000`) to control the Vite `/api` proxy target.
+For non-Docker frontend development:
+
+```bash
+# from repo root
+cd frontend
+cat > .env <<'EOF'
+VITE_API_TARGET=http://localhost:8000
+EOF
+```
+
+Then install and run the frontend locally:
+
+```bash
+npm install
+npm run dev
+```
+
+The app runs on Vite's default port (`http://localhost:5173`) unless changed in your local config.
 
 ### LLM / Ollama quick test
 

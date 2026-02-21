@@ -13,6 +13,7 @@ import { useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useJobs } from '../../hooks/useJobs';
 import { formatDisplayDate, formatDisplayDateTime } from '../../lib/date';
+import { getSafeExternalUrl } from '../../lib/url';
 
 const JobDetails = () => {
   const { id } = useParams<{ id: string }>();
@@ -72,18 +73,8 @@ const JobDetails = () => {
   const fullDescription = (job.descriptionFull || '').trim();
   const shortDescription = (job.descriptionShort || '').trim();
   const displayDescription = fullDescription || shortDescription;
-  const applyUrl = (() => {
-    try {
-      const parsedUrl = new URL(job.url);
-      const protocol = parsedUrl.protocol.toLowerCase();
-      if (protocol === 'http:' || protocol === 'https:') {
-        return parsedUrl.toString();
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  })();
+  const applyUrl = getSafeExternalUrl(job.url);
+  const scrapedAtValue = job.scrapedAt && job.scrapedAt !== 'null' ? job.scrapedAt : null;
   return (
     <div className="max-w-5xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
       {/* Navigation */}
@@ -195,7 +186,7 @@ const JobDetails = () => {
               <div className="flex flex-wrap gap-2">
                 {job.skills.map((skill, index) => (
                   <span
-                    key={`${skill}-${index}`}
+                    key={`${job.id}-${skill}-${index}`}
                     className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-slate-300 font-medium"
                   >
                     {skill}
@@ -221,7 +212,7 @@ const JobDetails = () => {
                 <div>
                   <p className="text-xs font-bold text-slate-500 mb-0.5 uppercase">Scraped At</p>
                   <p className="text-sm text-slate-300">
-                    {formatDisplayDateTime(job.scrapedAt)}
+                    {formatDisplayDateTime(scrapedAtValue, 'Unknown')}
                   </p>
                 </div>
               </div>

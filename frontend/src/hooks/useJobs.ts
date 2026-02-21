@@ -1,7 +1,21 @@
 import axios from 'axios';
 import { useCallback, useState } from 'react';
-import { getJob, getJobs, GetJobsParams } from '../api/jobs';
-import { Job } from '../types/job';
+import { getJob, getJobs } from '../api/jobs';
+import type { GetJobsParams } from '../api/jobs';
+import type { Job } from '../types/job';
+
+interface ApiErrorPayload {
+  detail?: string;
+}
+
+const getErrorDetail = (error: unknown): string | null => {
+  if (!axios.isAxiosError(error)) {
+    return null;
+  }
+
+  const data = error.response?.data as ApiErrorPayload | undefined;
+  return typeof data?.detail === 'string' ? data.detail : null;
+};
 
 export const useJobs = () => {
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -19,8 +33,9 @@ export const useJobs = () => {
       setJobs(data);
     } catch (err) {
       let errorMessage = 'Failed to fetch jobs';
-      if (axios.isAxiosError(err)) {
-        errorMessage = err.response?.data?.detail || errorMessage;
+      const detail = getErrorDetail(err);
+      if (detail) {
+        errorMessage = detail;
       }
       setJobsError(errorMessage);
       console.error('fetchJobs error:', err);
@@ -37,8 +52,9 @@ export const useJobs = () => {
       setJob(data);
     } catch (err) {
       let errorMessage = 'Failed to fetch job details';
-      if (axios.isAxiosError(err)) {
-        errorMessage = err.response?.data?.detail || errorMessage;
+      const detail = getErrorDetail(err);
+      if (detail) {
+        errorMessage = detail;
       }
       setJobError(errorMessage);
       console.error('fetchJob error:', err);

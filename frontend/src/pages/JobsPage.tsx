@@ -38,11 +38,17 @@ const JobsPage = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-3 bg-white/5 p-1 rounded-xl border border-white/10">
+        <div
+          className="flex items-center gap-3 bg-white/5 p-1 rounded-xl border border-white/10"
+          role="group"
+          aria-label="Job list view mode"
+        >
           <button
             onClick={() => setViewMode('grid')}
             className={`p-2 rounded-lg transition-all ${viewMode === 'grid' ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:text-white'}`}
             title="Grid View"
+            aria-label="Switch to grid view"
+            aria-pressed={viewMode === 'grid'}
           >
             <LayoutGrid className="w-5 h-5" />
           </button>
@@ -50,6 +56,8 @@ const JobsPage = () => {
             onClick={() => setViewMode('table')}
             className={`p-2 rounded-lg transition-all ${viewMode === 'table' ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:text-white'}`}
             title="Table View"
+            aria-label="Switch to table view"
+            aria-pressed={viewMode === 'table'}
           >
             <ListIcon className="w-5 h-5" />
           </button>
@@ -58,8 +66,12 @@ const JobsPage = () => {
 
       <div className="flex flex-col md:flex-row gap-4">
         <div className="relative flex-1 group">
+          <label htmlFor="job-search" className="sr-only">
+            Search jobs by title, company, or location
+          </label>
           <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500 group-focus-within:text-indigo-400 transition-colors" />
           <input
+            id="job-search"
             type="text"
             placeholder="Search by title, company, or location..."
             className="w-full bg-white/5 border border-white/10 rounded-xl py-4 pl-12 pr-4 text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all font-medium"
