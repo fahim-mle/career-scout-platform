@@ -2,6 +2,7 @@
 
 from src.tasks.scraper_tasks import (
     DatabaseTask,
+    scrape_seek_jobs,
     scrape_linkedin_jobs,
     scrape_linkedin_profile_set,
     test_task,
@@ -23,5 +24,6 @@ __all__ = [
     "score_single_job_task",
     "scrape_linkedin_jobs",
     "scrape_linkedin_profile_set",
+    "scrape_seek_jobs",
     "test_task",
 ]

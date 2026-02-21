@@ -33,8 +33,10 @@ from src.scrapers.linkedin import (
     LinkedInScraper,
     LinkedInTransientError,
 )
+from src.scrapers.seek import SeekNonRetryableError, SeekScraper, SeekTransientError
 
 MAX_LINKEDIN_SCRAPE_LIMIT = 10
+MAX_SEEK_SCRAPE_LIMIT = 10
 MAX_SCRAPER_TASK_RETRIES = 3
 # Fixed retry delay keeps retry timing deterministic.
 DEFAULT_RETRY_COUNTDOWN_SECONDS = 60
@@ -46,6 +48,7 @@ LINKEDIN_PROFILE_CONFIG_PATH = (
 )
 MAX_PROFILE_RUNS_PER_TASK = 25
 LINKEDIN_PLATFORM = "linkedin"
+SEEK_PLATFORM = "seek"
 ENRICHMENT_TASK_NAME = "src.tasks.enrichment_tasks.enrich_unstructured_jobs_task"
 
 
@@ -272,6 +275,108 @@ async def _run_linkedin_scrape_and_persist(
     return result
 
 
+async def _run_seek_scrape_and_persist(
+    query: str,
+    location: str,
+    limit: int,
+    task_id: str | None,
+) -> dict[str, Any]:
+    """Scrape Seek jobs and persist new or enriched rows."""
+    logger.info(
+        "Starting Seek scrape orchestration",
+        query=query,
+        location=location,
+        limit=limit,
+        task_id=task_id,
+    )
+
+    async with SeekScraper(headless=True, rate_limit_seconds=3.0) as scraper:
+        scraped_jobs = await scraper.scrape_jobs(
+            query=query,
+            location=location,
+            limit=limit,
+        )
+
+    created_count = 0
+    updated_count = 0
+    duplicate_count = 0
+    failed_count = 0
+    enrichment_job_ids: set[int] = set()
+
+    async with get_session() as db_session:
+        job_repository = JobRepository(db_session)
+        for job_payload in scraped_jobs:
+            external_id = str(job_payload.get("external_id", ""))
+
+            if not external_id:
+                failed_count += 1
+                logger.warning(
+                    "Skipping scraped Seek job without external_id",
+                    task_id=task_id,
+                )
+                continue
+
+            try:
+                existing_job = await job_repository.get_by_external_id(
+                    external_id=external_id,
+                    platform=SEEK_PLATFORM,
+                )
+                if existing_job is not None:
+                    update_payload = _build_job_update_payload(
+                        existing_job=existing_job,
+                        scraped_payload=job_payload,
+                    )
+                    if update_payload:
+                        updated_job = await job_repository.update(
+                            existing_job.id, update_payload
+                        )
+                        if updated_job is not None:
+                            enrichment_job_ids.add(updated_job.id)
+                            updated_count += 1
+                        continue
+
+                    duplicate_count += 1
+                    continue
+
+                created_job = await job_repository.create(job_payload)
+                enrichment_job_ids.add(created_job.id)
+                created_count += 1
+            except DuplicateJobError:
+                duplicate_count += 1
+            except RepositoryError as exc:
+                failed_count += 1
+                logger.error(
+                    "Failed to persist scraped Seek job",
+                    external_id=external_id,
+                    error=str(exc),
+                    task_id=task_id,
+                )
+            except Exception as exc:
+                failed_count += 1
+                logger.error(
+                    "Unexpected persistence error for scraped Seek job",
+                    external_id=external_id,
+                    error=str(exc),
+                    task_id=task_id,
+                    exc_info=True,
+                )
+
+    result = {
+        "status": "success",
+        "platform": SEEK_PLATFORM,
+        "query": query,
+        "location": location,
+        "scraped": len(scraped_jobs),
+        "created": created_count,
+        "updated": updated_count,
+        "duplicates": duplicate_count,
+        "failed": failed_count,
+        "enrichment_job_ids": sorted(enrichment_job_ids),
+    }
+    logger.info("Completed Seek scrape orchestration", task_id=task_id, result=result)
+    return result
+
+
 def _enqueue_enrichment_task(
     *,
     platform: str,
@@ -487,6 +592,7 @@ def _is_transient_error(exc: BaseException) -> bool:
     """
     transient_types: tuple[type[BaseException], ...] = (
         LinkedInTransientError,
+        SeekTransientError,
         PlaywrightTimeoutError,
         asyncio.TimeoutError,
         ConnectionError,
@@ -506,6 +612,7 @@ def _is_non_retryable_error(exc: BaseException) -> bool:
     """
     non_retryable_types: tuple[type[BaseException], ...] = (
         LinkedInNonRetryableError,
+        SeekNonRetryableError,
         ValueError,
     )
     return any(isinstance(item, non_retryable_types) for item in _exception_chain(exc))
@@ -778,6 +885,124 @@ def scrape_linkedin_jobs(
     finally:
         _record_scraper_run_metrics(
             platform=LINKEDIN_PLATFORM,
+            status=run_status,
+            duration_seconds=time.perf_counter() - started_at,
+            task_id=self.request.id,
+        )
+
+
+@celery_app.task(
+    name="src.tasks.scraper_tasks.scrape_seek_jobs",
+    bind=True,
+    base=DatabaseTask,
+)
+def scrape_seek_jobs(
+    self: DatabaseTask,
+    query: str,
+    location: str,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Scrape Seek jobs and persist non-duplicate records."""
+    started_at = time.perf_counter()
+    run_status = "failure"
+    try:
+        if not settings.SCRAPER_ENABLED:
+            run_status = "skipped"
+            logger.warning(
+                "Seek scrape task skipped because scraper is disabled",
+                query=query,
+                location=location,
+                task_id=self.request.id,
+            )
+            return {
+                "status": "skipped",
+                "platform": SEEK_PLATFORM,
+                "query": query,
+                "location": location,
+                "reason": "SCRAPER_ENABLED is false",
+            }
+
+        if limit <= 0:
+            raise ValueError("limit must be greater than 0")
+
+        bounded_limit = min(limit, MAX_SEEK_SCRAPE_LIMIT)
+        if bounded_limit != limit:
+            logger.warning(
+                "Seek scrape limit exceeded max, capping to safe value",
+                requested_limit=limit,
+                bounded_limit=bounded_limit,
+                task_id=self.request.id,
+            )
+
+        result = asyncio.run(
+            _run_seek_scrape_and_persist(
+                query=query,
+                location=location,
+                limit=bounded_limit,
+                task_id=self.request.id,
+            )
+        )
+
+        _record_scraper_result_metrics(
+            platform=SEEK_PLATFORM,
+            scraped=int(result.get("scraped", 0)),
+            duplicates=int(result.get("duplicates", 0)),
+            failed=int(result.get("failed", 0)),
+            updated=int(result.get("updated", 0)),
+            jobs_in_database=(
+                int(result.get("created", 0))
+                + int(result.get("duplicates", 0))
+                + int(result.get("updated", 0))
+            ),
+            task_id=self.request.id,
+        )
+        _enqueue_enrichment_task(
+            platform=SEEK_PLATFORM,
+            job_ids=[job_id for job_id in result.get("enrichment_job_ids", [])],
+            task_id=self.request.id,
+        )
+        run_status = "success"
+        return result
+    except Exception as exc:
+        if _is_non_retryable_error(exc):
+            logger.error(
+                "Seek scrape task failed with non-retryable error",
+                query=query,
+                location=location,
+                limit=limit,
+                task_id=self.request.id,
+                error=str(exc),
+            )
+            raise
+
+        if _is_transient_error(exc):
+            logger.warning(
+                "Seek scrape task hit transient error, scheduling retry",
+                query=query,
+                location=location,
+                limit=limit,
+                task_id=self.request.id,
+                error=str(exc),
+            )
+            raise self.retry(
+                exc=exc,
+                countdown=DEFAULT_RETRY_COUNTDOWN_SECONDS,
+                max_retries=MAX_SCRAPER_TASK_RETRIES,
+            )
+
+        logger.error(
+            "Seek scrape task failed with unexpected non-retryable error",
+            query=query,
+            location=location,
+            limit=limit,
+            task_id=self.request.id,
+            error=str(exc),
+            exc_info=True,
+        )
+        raise
+    finally:
+        _record_scraper_run_metrics(
+            platform=SEEK_PLATFORM,
             status=run_status,
             duration_seconds=time.perf_counter() - started_at,
             task_id=self.request.id,
