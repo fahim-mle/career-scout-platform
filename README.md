@@ -56,6 +56,14 @@ Use `bash scripts/generate-secrets.sh --force` to overwrite existing files in `s
 docker compose up -d --build
 ```
 
+For faster UI iteration (without waiting on full health dependency chains), you can start only core services for frontend work:
+
+```bash
+docker compose up -d frontend backend postgres redis
+```
+
+For non-Docker frontend development, set `VITE_API_TARGET` in `frontend/.env` (for example `VITE_API_TARGET=http://localhost:8000`) to control the Vite `/api` proxy target.
+
 ### LLM / Ollama quick test
 
 Make sure the Ollama service is running first (`docker compose up -d ollama`).

@@ -3,6 +3,8 @@ import path from 'path'
 import { defineConfig } from 'vite'
 
 // https://vitejs.dev/config/
+const apiTarget = process.env.VITE_API_TARGET || 'http://backend:8000'
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -14,7 +16,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://backend:8000',
+        target: apiTarget,
         changeOrigin: true,
       },
     },
