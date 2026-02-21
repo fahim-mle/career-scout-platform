@@ -50,6 +50,16 @@ celery_app.conf.update(
             "schedule": crontab(hour="*/4", minute=40),
             "kwargs": {"platform": "linkedin"},
         },
+        "seek-scrape-every-4h": {
+            "task": "src.tasks.scraper_tasks.scrape_seek_jobs",
+            # Offset from existing 00/20/40 windows to avoid overlap.
+            "schedule": crontab(hour="*/4", minute=50),
+            "kwargs": {
+                "query": "Software Engineer",
+                "location": "Brisbane QLD",
+                "limit": 10,
+            },
+        },
     },
 )
 
