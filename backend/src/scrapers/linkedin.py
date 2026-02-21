@@ -43,7 +43,32 @@ class LinkedInScraper(BaseScraper):
         ".jobs-box__html-content",
         ".jobs-description__container",
     )
+    DESCRIPTION_SHOW_MORE_SELECTORS = (
+        "button.show-more-less-html__button",
+        "button[aria-label*='Show more']",
+        "button[aria-label*='See more']",
+    )
+    CARD_SNIPPET_SELECTORS = (
+        ".job-search-card__snippet",
+        ".job-card-list__description",
+        ".base-search-card__metadata",
+        ".job-search-card__snippet-wrapper",
+    )
+    DESCRIPTION_FALLBACK_SELECTORS = (
+        "main",
+        "section",
+        "article",
+        "body",
+    )
+    MAX_DETAIL_EXTRACTION_ATTEMPTS = 2
     SHORT_DESCRIPTION_MAX_LENGTH = 360
+    MAX_DESCRIPTION_FULL_LENGTH = 3_000
+    DESCRIPTION_END_MARKERS = (
+        "Set alert for similar jobs",
+        "Interested in working with us in the future?",
+        "Looking for talent? Post a job",
+        "About the company",
+    )
     JOB_CARD_SELECTORS = (
         "ul.jobs-search__results-list li",
         "ul.scaffold-layout__list-container li.jobs-search-results__list-item",
@@ -238,6 +263,12 @@ class LinkedInScraper(BaseScraper):
                 details = await self.scrape_job_details(job_url=job_url)
                 if details:
                     job_data.update(details)
+                else:
+                    logger.bind(
+                        scraper=self.__class__.__name__,
+                        url=job_url,
+                        external_id=job_data.get("external_id"),
+                    ).warning("No LinkedIn detail fields extracted for job")
             except LinkedInNonRetryableError as exc:
                 logger.bind(
                     scraper=self.__class__.__name__,
@@ -297,6 +328,9 @@ class LinkedInScraper(BaseScraper):
         description_full = await self._extract_text_from_page_selectors(
             selectors=self.DESCRIPTION_SELECTORS
         )
+        if not description_full:
+            description_full = await self._extract_description_with_fallback()
+        description_full = self._sanitize_description_text(description_full)
 
         details: dict[str, Any] = {
             "description_full": description_full,
@@ -364,6 +398,13 @@ class LinkedInScraper(BaseScraper):
         if not title or not company or not location:
             return None
 
+        card_description = await self._extract_card_description(
+            card=card,
+            title=title,
+            company=company,
+            location=location,
+        )
+
         return {
             "external_id": external_id,
             "platform": self.PLATFORM,
@@ -371,8 +412,83 @@ class LinkedInScraper(BaseScraper):
             "title": title,
             "company": company,
             "location": location,
+            "description_short": card_description,
+            "description_full": card_description,
             "scraped_at": datetime.now(timezone.utc),
         }
+
+    async def _extract_card_description(
+        self,
+        card: ElementHandle,
+        title: str,
+        company: str,
+        location: str,
+    ) -> str | None:
+        """Extract best-effort description snippet from job card content."""
+        snippet = await self._extract_first_text(card, self.CARD_SNIPPET_SELECTORS)
+        if snippet:
+            return snippet
+
+        try:
+            card_text = await card.inner_text()
+        except Exception:
+            return None
+
+        normalized = self._normalize_text(card_text)
+        if not normalized:
+            return None
+
+        condensed = normalized
+        for token in (title, company, location):
+            condensed = condensed.replace(token, " ")
+        condensed = self._normalize_text(condensed)
+        if condensed and len(condensed) >= 30:
+            return self._build_short_description(condensed)
+
+        synthetic = self._normalize_text(
+            f"Role: {title}. Company: {company}. Location: {location}."
+        )
+        return synthetic
+
+    async def _extract_description_with_fallback(self) -> str | None:
+        """Extract job description using staged fallback strategy.
+
+        Returns:
+            Best-effort normalized full description text.
+        """
+        if self.page is None:
+            raise RuntimeError("Scraper page is not initialized")
+
+        for attempt in range(1, self.MAX_DETAIL_EXTRACTION_ATTEMPTS + 1):
+            if attempt > 1:
+                await self._rate_limit_with_jitter(base_seconds=1.0)
+
+            await self._expand_description_if_available()
+            candidate = await self._extract_text_from_page_selectors(
+                selectors=self.DESCRIPTION_SELECTORS
+            )
+            if candidate:
+                return candidate
+
+        return await self._extract_text_from_page_selectors(
+            selectors=self.DESCRIPTION_FALLBACK_SELECTORS
+        )
+
+    async def _expand_description_if_available(self) -> None:
+        """Click description expansion controls when present."""
+        if self.page is None:
+            raise RuntimeError("Scraper page is not initialized")
+
+        for selector in self.DESCRIPTION_SHOW_MORE_SELECTORS:
+            button = await self.page.query_selector(selector)
+            if button is None:
+                continue
+
+            try:
+                await button.click(timeout=2_500)
+                return
+            except Exception:
+                continue
 
     async def _extract_text_from_page_selectors(
         self,
@@ -445,6 +561,36 @@ class LinkedInScraper(BaseScraper):
         if cutoff <= 0:
             cutoff = cls.SHORT_DESCRIPTION_MAX_LENGTH
         return f"{description_full[:cutoff].rstrip()}..."
+
+    @classmethod
+    def _sanitize_description_text(cls, value: str | None) -> str | None:
+        """Normalize and trim noisy LinkedIn detail text to useful content."""
+        if not value:
+            return None
+
+        normalized = cls._normalize_text(value)
+        if not normalized:
+            return None
+
+        about_marker = "About the job"
+        if about_marker in normalized:
+            normalized = normalized[normalized.find(about_marker) :]
+
+        for marker in cls.DESCRIPTION_END_MARKERS:
+            if marker in normalized:
+                normalized = normalized[: normalized.find(marker)]
+
+        normalized = cls._normalize_text(normalized)
+        if not normalized:
+            return None
+
+        if len(normalized) <= cls.MAX_DESCRIPTION_FULL_LENGTH:
+            return normalized
+
+        cutoff = normalized.rfind(" ", 0, cls.MAX_DESCRIPTION_FULL_LENGTH)
+        if cutoff <= 0:
+            cutoff = cls.MAX_DESCRIPTION_FULL_LENGTH
+        return normalized[:cutoff].rstrip()
 
     @classmethod
     def _build_search_url(cls, query: str, location: str) -> str:

@@ -59,6 +59,10 @@ def test_enrich_unstructured_jobs_success_for_explicit_job_ids(
     """Task returns successful payload for explicit job_ids mode."""
     task = FakeBoundTask()
     monkeypatch.setattr(enrichment_tasks.settings, "SCRAPER_ENABLED", True)
+    enqueue_calls: list[dict[str, Any]] = []
+
+    def fake_send_task(name: str, kwargs: dict[str, Any], countdown: int) -> None:
+        enqueue_calls.append({"name": name, "kwargs": kwargs, "countdown": countdown})
 
     async def fake_run_batch_enrichment(
         platform: str,
@@ -84,6 +88,7 @@ def test_enrich_unstructured_jobs_success_for_explicit_job_ids(
         "_run_batch_enrichment",
         fake_run_batch_enrichment,
     )
+    monkeypatch.setattr(enrichment_tasks.celery_app, "send_task", fake_send_task)
 
     result = ENRICH_BATCH_TASK_RUN(
         task,
@@ -95,7 +100,53 @@ def test_enrich_unstructured_jobs_success_for_explicit_job_ids(
     assert result["status"] == "success"
     assert result["mode"] == "job_ids"
     assert result["enriched"] == 2
+    assert len(enqueue_calls) == 1
+    enqueue_call = enqueue_calls[0]
+    assert enqueue_call["name"] == enrichment_tasks.SCORING_TASK_NAME
+    assert enqueue_call["kwargs"] == {"platform": "linkedin"}
+    assert enqueue_call["countdown"] == 5
     assert task.retry_calls == []
+
+
+def test_enrich_unstructured_jobs_does_not_enqueue_scoring_when_none_enriched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Task does not enqueue scoring when no jobs were enriched."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(enrichment_tasks.settings, "SCRAPER_ENABLED", True)
+    enqueue_calls: list[dict[str, Any]] = []
+
+    def fake_send_task(name: str, kwargs: dict[str, Any], countdown: int) -> None:
+        enqueue_calls.append({"name": name, "kwargs": kwargs, "countdown": countdown})
+
+    async def fake_run_batch_enrichment(
+        platform: str,
+        limit: int,
+        job_ids: list[int] | None,
+        task_id: str | None,
+    ) -> dict[str, Any]:
+        del platform, limit, job_ids, task_id
+        return {
+            "status": "success",
+            "platform": "linkedin",
+            "mode": "job_ids",
+            "processed": 1,
+            "enriched": 0,
+            "failed": 0,
+        }
+
+    monkeypatch.setattr(
+        enrichment_tasks,
+        "_run_batch_enrichment",
+        fake_run_batch_enrichment,
+    )
+    monkeypatch.setattr(enrichment_tasks.celery_app, "send_task", fake_send_task)
+
+    result = ENRICH_BATCH_TASK_RUN(task, platform="linkedin", limit=5, job_ids=[10])
+
+    assert result["status"] == "success"
+    assert result["enriched"] == 0
+    assert enqueue_calls == []
 
 
 def test_enrich_unstructured_jobs_retries_on_transient_error(

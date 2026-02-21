@@ -52,8 +52,8 @@ class JobUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class JobResponse(BaseModel):
-    """Schema returned for persisted job records."""
+class RawJobResponse(BaseModel):
+    """Schema returned for persisted raw scraped job records."""
 
     id: int
     created_at: datetime
@@ -72,13 +72,47 @@ class JobResponse(BaseModel):
     is_active: bool
     skills: list[str] | None
     salary_range: dict[str, Any] | None
+    relevance_score: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
+class EnrichedJobResponse(BaseModel):
+    """Schema returned for jobs enriched with processed metadata."""
+
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    external_id: str
+    platform: str
+    url: str
+    title: str
+    company: str
+    location: str
+    description_short: str | None
+    description_full: str | None
+    posted_date: date | None
+    scraped_at: datetime
+    is_active: bool
+    skills: list[str] | None = None
+    job_type: str | None = None
+    salary_range: dict[str, Any] | None = None
+    enrichment_status: str | None = None
+    enrichment_version: str | None = None
+    enrichment_updated_at: datetime | None = None
+    relevance_score: int | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+JobResponse = RawJobResponse
+
+
 __all__ = [
     "ALLOWED_PLATFORMS",
+    "EnrichedJobResponse",
     "JobCreate",
     "JobResponse",
+    "RawJobResponse",
     "JobUpdate",
 ]

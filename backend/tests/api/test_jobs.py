@@ -2,16 +2,50 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_db_session, get_job_service
 from src.core.exceptions import BusinessLogicError
 from src.main import app
+from src.models.job_enrichment import JobEnrichment
+from src.models.match_score import MatchScore
+from src.models.profile import Profile
+
+
+ENRICHED_REQUIRED_FIELDS = {
+    "id",
+    "created_at",
+    "updated_at",
+    "external_id",
+    "platform",
+    "url",
+    "title",
+    "company",
+    "location",
+    "description_short",
+    "description_full",
+    "posted_date",
+    "scraped_at",
+    "is_active",
+    "skills",
+    "job_type",
+    "salary_range",
+    "enrichment_status",
+    "enrichment_version",
+    "enrichment_updated_at",
+    "relevance_score",
+}
+
+
+def assert_enriched_job_shape(payload: dict[str, Any]) -> None:
+    """Assert API response contains enriched jobs contract fields."""
+    assert ENRICHED_REQUIRED_FIELDS.issubset(payload.keys())
 
 
 def build_job_payload(
@@ -76,6 +110,13 @@ class TestJobsAPI:
         assert body["title"] == payload["title"]
         assert body["is_active"] is True
 
+        list_response = await client.get("/api/v1/jobs")
+        listed_job = list_response.json()[0]
+        assert_enriched_job_shape(listed_job)
+        assert listed_job["enrichment_status"] is None
+        assert listed_job["enrichment_version"] is None
+        assert listed_job["enrichment_updated_at"] is None
+
     @pytest.mark.asyncio
     async def test_list_jobs_with_data(self, client: AsyncClient) -> None:
         await client.post("/api/v1/jobs", json=build_job_payload("api-list-1"))
@@ -88,6 +129,30 @@ class TestJobsAPI:
         assert len(body) == 2
         assert body[0]["external_id"] == "api-list-2"
         assert body[1]["external_id"] == "api-list-1"
+        assert_enriched_job_shape(body[0])
+        assert_enriched_job_shape(body[1])
+        assert body[0]["skills"] is None
+        assert body[0]["job_type"] is None
+        assert body[0]["salary_range"] is None
+        assert body[0]["enrichment_status"] is None
+        assert body[0]["enrichment_version"] is None
+        assert body[0]["enrichment_updated_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_scraped_raw_jobs_returns_raw_schema(
+        self, client: AsyncClient
+    ) -> None:
+        await client.post("/api/v1/jobs", json=build_job_payload("api-raw-list-1"))
+
+        response = await client.get("/api/v1/scraped_raw_jobs")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body) == 1
+        assert body[0]["external_id"] == "api-raw-list-1"
+        assert "enrichment_status" not in body[0]
+        assert "enrichment_version" not in body[0]
+        assert "enrichment_updated_at" not in body[0]
 
     @pytest.mark.asyncio
     async def test_list_jobs_pagination(self, client: AsyncClient) -> None:
@@ -145,6 +210,119 @@ class TestJobsAPI:
         assert "invalid platform" in response.json()["detail"].lower()
 
     @pytest.mark.asyncio
+    async def test_list_jobs_sort_relevance_returns_scored_jobs(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        first_job_response = await client.post(
+            "/api/v1/jobs", json=build_job_payload("api-sort-relevance-1")
+        )
+        second_job_response = await client.post(
+            "/api/v1/jobs", json=build_job_payload("api-sort-relevance-2")
+        )
+
+        profile = Profile(
+            name="Sort Tester",
+            location="Brisbane",
+            experience_years=5,
+            skills=["Python", "FastAPI"],
+            preferences={"remote": True},
+        )
+        db_session.add(profile)
+        await db_session.commit()
+        await db_session.refresh(profile)
+
+        first_job_id = first_job_response.json()["id"]
+        second_job_id = second_job_response.json()["id"]
+        db_session.add_all(
+            [
+                MatchScore(
+                    job_id=first_job_id,
+                    profile_id=profile.id,
+                    relevance_score=72,
+                    category="Relevant",
+                    explanation="Good fit",
+                    scored_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                ),
+                MatchScore(
+                    job_id=second_job_id,
+                    profile_id=profile.id,
+                    relevance_score=94,
+                    category="Most Relevant",
+                    explanation="Excellent fit",
+                    scored_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+                ),
+            ]
+        )
+        db_session.add_all(
+            [
+                JobEnrichment(
+                    job_id=first_job_id,
+                    extractor_version="v1",
+                    status="completed",
+                    skills=["Python", "SQL"],
+                    job_type="Contract",
+                    salary_min=110000.0,
+                    salary_max=140000.0,
+                    salary_currency="AUD",
+                    salary_period="year",
+                    salary_raw="$110k-$140k",
+                    location_normalized="Brisbane, AU",
+                    enriched_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+                ),
+                JobEnrichment(
+                    job_id=second_job_id,
+                    extractor_version="v2",
+                    status="completed",
+                    skills=["Python", "FastAPI", "PostgreSQL"],
+                    job_type="Full-time",
+                    salary_min=150000.0,
+                    salary_max=190000.0,
+                    salary_currency="AUD",
+                    salary_period="year",
+                    salary_raw="$150k-$190k",
+                    location_normalized="Sydney, AU",
+                    enriched_at=datetime(2026, 1, 3, tzinfo=timezone.utc),
+                ),
+            ]
+        )
+        await db_session.commit()
+
+        response = await client.get("/api/v1/jobs?sort=relevance")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert_enriched_job_shape(body[0])
+        assert_enriched_job_shape(body[1])
+        assert [item["id"] for item in body] == [second_job_id, first_job_id]
+        assert [item["relevance_score"] for item in body] == [94, 72]
+        assert body[0]["skills"] == ["Python", "FastAPI", "PostgreSQL"]
+        assert body[0]["job_type"] == "Full-time"
+        assert body[0]["location"] == "Sydney, AU"
+        assert body[0]["salary_range"] == {
+            "min": 150000.0,
+            "max": 190000.0,
+            "currency": "AUD",
+            "period": "year",
+            "raw": "$150k-$190k",
+        }
+        assert body[0]["enrichment_status"] == "completed"
+        assert body[0]["enrichment_version"] == "v2"
+        assert body[0]["enrichment_updated_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_list_jobs_sort_relevance_without_profile_returns_400(
+        self, client: AsyncClient
+    ) -> None:
+        await client.post(
+            "/api/v1/jobs", json=build_job_payload("api-sort-no-profile-1")
+        )
+
+        response = await client.get("/api/v1/jobs?sort=relevance")
+
+        assert response.status_code == 400
+        assert "create a profile first" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
     async def test_get_job_by_id_success(self, client: AsyncClient) -> None:
         create_response = await client.post(
             "/api/v1/jobs", json=build_job_payload("api-get-1")
@@ -154,7 +332,10 @@ class TestJobsAPI:
         response = await client.get(f"/api/v1/jobs/{job_id}")
 
         assert response.status_code == 200
-        assert response.json()["id"] == job_id
+        body = response.json()
+        assert body["id"] == job_id
+        assert_enriched_job_shape(body)
+        assert body["enrichment_status"] is None
 
     @pytest.mark.asyncio
     async def test_get_job_by_id_not_found(self, client: AsyncClient) -> None:
@@ -168,7 +349,7 @@ class TestJobsAPI:
         self, client: AsyncClient
     ) -> None:
         class BrokenGetService:
-            async def get_job(self, job_id: int) -> dict[str, Any]:
+            async def get_enriched_job(self, job_id: int) -> dict[str, Any]:
                 raise BusinessLogicError("service failure")
 
         app.dependency_overrides[get_job_service] = lambda: BrokenGetService()
@@ -177,6 +358,32 @@ class TestJobsAPI:
 
         assert response.status_code == 400
         assert "service failure" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_get_scraped_raw_job_by_id_success(self, client: AsyncClient) -> None:
+        create_response = await client.post(
+            "/api/v1/jobs", json=build_job_payload("api-raw-get-1")
+        )
+        job_id = create_response.json()["id"]
+
+        response = await client.get(f"/api/v1/scraped_raw_jobs/{job_id}")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["id"] == job_id
+        assert body["external_id"] == "api-raw-get-1"
+        assert "enrichment_status" not in body
+        assert "enrichment_version" not in body
+        assert "enrichment_updated_at" not in body
+
+    @pytest.mark.asyncio
+    async def test_get_scraped_raw_job_by_id_not_found(
+        self, client: AsyncClient
+    ) -> None:
+        response = await client.get("/api/v1/scraped_raw_jobs/999999")
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
 
     @pytest.mark.asyncio
     async def test_create_job_duplicate_conflict(self, client: AsyncClient) -> None:

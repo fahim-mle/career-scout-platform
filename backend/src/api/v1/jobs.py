@@ -7,28 +7,39 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from loguru import logger
 
-from src.api.deps import get_job_service
+from src.api.deps import get_job_service, get_match_service
 from src.core.exceptions import BusinessLogicError, NotFoundError
-from src.schemas.job import JobCreate, JobResponse, JobUpdate
+from src.schemas.job import (
+    EnrichedJobResponse,
+    JobCreate,
+    JobResponse,
+    JobUpdate,
+    RawJobResponse,
+)
 from src.services.job_service import JobService
+from src.services.match_service import MatchService
 
 router = APIRouter()
+raw_jobs_router = APIRouter()
 
 
-@router.get("", response_model=list[JobResponse])
+@router.get("", response_model=list[EnrichedJobResponse])
 async def list_jobs(
     service: Annotated[JobService, Depends(get_job_service)],
+    match_service: Annotated[MatchService, Depends(get_match_service)],
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    sort: str = Query("date", pattern="^(date|relevance)$"),
     platform: str | None = None,
     is_active: bool = True,
-) -> list[JobResponse]:
+) -> list[EnrichedJobResponse]:
     """List jobs with pagination and optional filters.
 
     Args:
         service: Job service dependency.
         skip: Number of rows to offset.
         limit: Maximum number of rows to return.
+        sort: Sort strategy; date order or relevance score order.
         platform: Optional platform filter.
         is_active: Whether to return active jobs only.
 
@@ -39,7 +50,14 @@ async def list_jobs(
         HTTPException: If business validation fails.
     """
     try:
-        return await service.list_jobs(
+        if sort == "relevance":
+            return await match_service.list_jobs_by_relevance(
+                skip=skip,
+                limit=limit,
+                platform=platform,
+                is_active=is_active,
+            )
+        return await service.list_enriched_jobs(
             skip=skip,
             limit=limit,
             platform=platform,
@@ -52,11 +70,48 @@ async def list_jobs(
         ) from exc
 
 
-@router.get("/{job_id}", response_model=JobResponse)
+@raw_jobs_router.get("/scraped_raw_jobs", response_model=list[RawJobResponse])
+async def list_scraped_raw_jobs(
+    service: Annotated[JobService, Depends(get_job_service)],
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    platform: str | None = None,
+    is_active: bool = True,
+) -> list[RawJobResponse]:
+    """List raw scraped jobs with pagination and optional filters.
+
+    Args:
+        service: Job service dependency.
+        skip: Number of rows to offset.
+        limit: Maximum number of rows to return.
+        platform: Optional platform filter.
+        is_active: Whether to return active jobs only.
+
+    Returns:
+        List of raw scraped job response payloads.
+
+    Raises:
+        HTTPException: If business validation fails.
+    """
+    try:
+        return await service.list_raw_jobs(
+            skip=skip,
+            limit=limit,
+            platform=platform,
+            is_active=is_active,
+        )
+    except BusinessLogicError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@router.get("/{job_id}", response_model=EnrichedJobResponse)
 async def get_job(
     job_id: int,
     service: Annotated[JobService, Depends(get_job_service)],
-) -> JobResponse:
+) -> EnrichedJobResponse:
     """Get one job by ID.
 
     Args:
@@ -70,7 +125,37 @@ async def get_job(
         HTTPException: If job is missing or service fails.
     """
     try:
-        return await service.get_job(job_id)
+        return await service.get_enriched_job(job_id)
+    except NotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except BusinessLogicError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+
+@raw_jobs_router.get("/scraped_raw_jobs/{job_id}", response_model=RawJobResponse)
+async def get_scraped_raw_job(
+    job_id: int,
+    service: Annotated[JobService, Depends(get_job_service)],
+) -> RawJobResponse:
+    """Get one raw scraped job by ID.
+
+    Args:
+        job_id: Primary key of the job.
+        service: Job service dependency.
+
+    Returns:
+        One raw scraped job response payload.
+
+    Raises:
+        HTTPException: If job is missing or service fails.
+    """
+    try:
+        return await service.get_raw_job(job_id)
     except NotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)

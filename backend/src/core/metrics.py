@@ -9,6 +9,14 @@ from typing import Iterator, cast
 from loguru import logger
 from prometheus_client import Counter, Gauge, Histogram
 
+ALLOWED_SCORING_LLM_STATUSES: tuple[str, ...] = ("success", "failure")
+ALLOWED_SCORE_CATEGORIES: tuple[str, ...] = (
+    "Most Relevant",
+    "Relevant",
+    "Somewhat Relevant",
+    "Not Relevant",
+)
+
 _METRICS_CACHE: dict[str, Counter | Gauge | Histogram] = globals().get(
     "_METRICS_CACHE", {}
 )
@@ -138,6 +146,33 @@ def _validate_status(status: str) -> None:
         raise ValueError("status label must be one of: success, failure, skipped.")
 
 
+def _validate_scoring_llm_status(status: str) -> None:
+    """Validate metric status label for scoring LLM calls.
+
+    Args:
+        status: LLM call status label.
+
+    Raises:
+        ValueError: If status is not one of success/failure.
+    """
+    if status not in ALLOWED_SCORING_LLM_STATUSES:
+        raise ValueError("status label must be one of: success, failure.")
+
+
+def _validate_score_category(category: str) -> None:
+    """Validate score category label for scoring gauges.
+
+    Args:
+        category: Canonical score category label.
+
+    Raises:
+        ValueError: If category is not one of the supported labels.
+    """
+    if category not in ALLOWED_SCORE_CATEGORIES:
+        allowed_categories = ", ".join(ALLOWED_SCORE_CATEGORIES)
+        raise ValueError(f"category label must be one of: {allowed_categories}.")
+
+
 def _validate_non_negative(value: float, field_name: str) -> None:
     """Validate non-negative numeric metric values.
 
@@ -222,6 +257,48 @@ enrichment_errors_total: Counter = _get_or_create_counter(
     name="enrichment_errors_total",
     documentation="Total enrichment task errors, labeled by platform.",
     labelnames=("platform",),
+)
+
+scoring_runs_total: Counter = _get_or_create_counter(
+    name="scoring_runs_total",
+    documentation="Total scoring task runs labeled by platform and status.",
+    labelnames=("platform", "status"),
+)
+
+scoring_duration_seconds: Histogram = _get_or_create_histogram(
+    name="scoring_duration_seconds",
+    documentation="Scoring task duration in seconds labeled by platform.",
+    labelnames=("platform",),
+)
+
+jobs_scored_total: Counter = _get_or_create_counter(
+    name="jobs_scored_total",
+    documentation="Total number of jobs scored, labeled by platform.",
+    labelnames=("platform",),
+)
+
+scoring_errors_total: Counter = _get_or_create_counter(
+    name="scoring_errors_total",
+    documentation="Total scoring task errors, labeled by platform.",
+    labelnames=("platform",),
+)
+
+scoring_llm_calls_total: Counter = _get_or_create_counter(
+    name="scoring_llm_calls_total",
+    documentation="Total LLM calls during scoring, labeled by status.",
+    labelnames=("status",),
+)
+
+scoring_llm_duration_seconds: Histogram = _get_or_create_histogram(
+    name="scoring_llm_duration_seconds",
+    documentation="Duration of LLM scoring calls in seconds.",
+    labelnames=(),
+)
+
+jobs_by_score_category: Gauge = _get_or_create_gauge(
+    name="jobs_by_score_category",
+    documentation="Current jobs grouped by score category.",
+    labelnames=("category",),
 )
 
 jobs_in_database_total: Gauge = _get_or_create_gauge(
@@ -405,6 +482,116 @@ def increment_enrichment_errors(platform: str, count: int = 1) -> None:
     enrichment_errors_total.labels(platform=platform).inc(count)
 
 
+def increment_scoring_runs(platform: str, status: str) -> None:
+    """Increment scoring run counter.
+
+    Args:
+        platform: Source platform label.
+        status: Run status label, one of success/failure/skipped.
+
+    Raises:
+        ValueError: If platform or status labels are invalid.
+    """
+    _validate_platform(platform)
+    _validate_status(status)
+
+    scoring_runs_total.labels(platform=platform, status=status).inc()
+
+
+def observe_scoring_duration(platform: str, duration_seconds: float) -> None:
+    """Observe scoring task duration.
+
+    Args:
+        platform: Source platform label.
+        duration_seconds: Task runtime in seconds.
+
+    Raises:
+        ValueError: If labels or metric values are invalid.
+    """
+    _validate_platform(platform)
+    _validate_non_negative(duration_seconds, "duration_seconds")
+
+    scoring_duration_seconds.labels(platform=platform).observe(duration_seconds)
+
+
+def increment_jobs_scored(platform: str, count: int = 1) -> None:
+    """Increment scored jobs counter.
+
+    Args:
+        platform: Source platform label.
+        count: Number of scored jobs to add.
+
+    Raises:
+        ValueError: If platform label is invalid or count is negative.
+    """
+    _validate_platform(platform)
+    _validate_non_negative(float(count), "count")
+
+    jobs_scored_total.labels(platform=platform).inc(count)
+
+
+def increment_scoring_errors(platform: str, count: int = 1) -> None:
+    """Increment scoring error counter.
+
+    Args:
+        platform: Source platform label.
+        count: Number of scoring errors to add.
+
+    Raises:
+        ValueError: If platform label is invalid or count is negative.
+    """
+    _validate_platform(platform)
+    _validate_non_negative(float(count), "count")
+
+    scoring_errors_total.labels(platform=platform).inc(count)
+
+
+def increment_scoring_llm_calls(status: str, count: int = 1) -> None:
+    """Increment scoring LLM call counter by status.
+
+    Args:
+        status: LLM call status label, one of success/failure.
+        count: Number of calls to increment.
+
+    Raises:
+        ValueError: If status is invalid or count is negative.
+    """
+    _validate_scoring_llm_status(status)
+    _validate_non_negative(float(count), "count")
+
+    scoring_llm_calls_total.labels(status=status).inc(count)
+
+
+def observe_scoring_llm_duration(duration_seconds: float) -> None:
+    """Observe one scoring LLM call duration.
+
+    Args:
+        duration_seconds: LLM call runtime in seconds.
+
+    Raises:
+        ValueError: If duration is negative.
+    """
+    _validate_non_negative(duration_seconds, "duration_seconds")
+
+    scoring_llm_duration_seconds.observe(duration_seconds)
+
+
+def set_jobs_by_score_category(category: str, total: int) -> None:
+    """Set current scored job count for a category.
+
+    Args:
+        category: Score category label.
+        total: Number of jobs in the category.
+
+    Raises:
+        ValueError: If category is invalid or total is negative.
+    """
+    _validate_score_category(category)
+    _validate_non_negative(float(total), "total")
+
+    jobs_by_score_category.labels(category=category).set(total)
+
+
 def set_jobs_in_database(platform: str, total: int) -> None:
     """Set jobs-in-database gauge for platform.
 
@@ -478,21 +665,35 @@ __all__ = [
     "increment_jobs_duplicates",
     "increment_jobs_errors",
     "increment_jobs_enriched",
+    "increment_jobs_scored",
     "increment_jobs_created",
     "increment_jobs_scraped",
     "increment_jobs_updated",
+    "increment_scoring_errors",
+    "increment_scoring_llm_calls",
+    "increment_scoring_runs",
     "increment_scraper_runs",
+    "jobs_by_score_category",
     "jobs_duplicates_total",
     "jobs_enriched_total",
     "jobs_errors_total",
     "jobs_created_total",
     "jobs_in_database_total",
+    "jobs_scored_total",
     "jobs_scraped_total",
     "jobs_updated_total",
     "observe_enrichment_duration",
+    "observe_scoring_llm_duration",
+    "observe_scoring_duration",
     "observe_db_query_duration",
     "observe_scraper_duration",
     "scraper_duration_seconds",
     "scraper_runs_total",
+    "scoring_duration_seconds",
+    "scoring_errors_total",
+    "scoring_llm_calls_total",
+    "scoring_llm_duration_seconds",
+    "scoring_runs_total",
+    "set_jobs_by_score_category",
     "set_jobs_in_database",
 ]
