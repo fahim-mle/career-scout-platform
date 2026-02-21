@@ -1,16 +1,11 @@
-import { clsx, type ClassValue } from 'clsx'
 import { Briefcase, LayoutGrid, LogOut, Search, Settings, User } from 'lucide-react'
 import { type ComponentType, type ReactNode } from 'react'
 import { Link, Route, Routes, useLocation } from 'react-router-dom'
-import { twMerge } from 'tailwind-merge'
 import JobDetails from './components/jobs/JobDetails'
+import { cn } from './lib/utils'
 import ApplicationsPage from './pages/ApplicationsPage'
 import JobsPage from './pages/JobsPage'
 import ProfilePage from './pages/ProfilePage'
-
-function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs))
-}
 
 const SidebarItem = ({ to, icon: Icon, label, active }: { to: string; icon: ComponentType<{ className?: string }>; label: string; active?: boolean }) => (
   <Link

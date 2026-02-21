@@ -8,6 +8,14 @@ interface JobTableProps {
 }
 
 const JobTable = ({ jobs }: JobTableProps) => {
+  if (jobs.length === 0) {
+    return (
+      <div className="glass-card p-10 text-center">
+        <p className="text-slate-300 font-medium">No jobs found.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="glass-card overflow-hidden">
       <div className="overflow-x-auto">

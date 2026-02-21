@@ -5,7 +5,7 @@ import { useJobs } from '../hooks/useJobs';
 import { Job } from '../types/job';
 
 const JobsPage = () => {
-  const { jobs, loading, error, fetchJobs } = useJobs();
+  const { jobs, jobsLoading, jobsError, fetchJobs } = useJobs();
   const [viewMode, setViewMode] = useState<'grid' | 'table'>('grid');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -73,7 +73,7 @@ const JobsPage = () => {
         </button>
       </div>
 
-      {loading && jobs.length === 0 ? (
+      {jobsLoading && jobs.length === 0 ? (
         viewMode === 'grid' ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -95,9 +95,9 @@ const JobsPage = () => {
             <div className="h-12 bg-white/5 rounded-lg w-full" />
           </div>
         )
-      ) : error ? (
+      ) : jobsError ? (
         <div className="glass-card p-12 text-center space-y-4">
-          <p className="text-red-400 font-medium">{error}</p>
+          <p className="text-red-400 font-medium">{jobsError}</p>
           <button
             onClick={() => fetchJobs()}
             className="text-indigo-400 hover:text-indigo-300 font-medium underline underline-offset-4"

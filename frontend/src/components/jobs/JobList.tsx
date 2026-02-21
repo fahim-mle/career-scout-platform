@@ -8,6 +8,14 @@ interface JobListProps {
 }
 
 const JobList = ({ jobs, viewMode }: JobListProps) => {
+  if (jobs.length === 0) {
+    return (
+      <div className="glass-card p-10 text-center">
+        <p className="text-slate-300 font-medium">No jobs found.</p>
+      </div>
+    );
+  }
+
   if (viewMode === 'table') {
     return <JobTable jobs={jobs} />;
   }

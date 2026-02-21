@@ -6,12 +6,14 @@ import { Job } from '../types/job';
 export const useJobs = () => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [job, setJob] = useState<Job | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [jobLoading, setJobLoading] = useState(false);
+  const [jobsError, setJobsError] = useState<string | null>(null);
+  const [jobError, setJobError] = useState<string | null>(null);
 
   const fetchJobs = useCallback(async (params: GetJobsParams = {}) => {
-    setLoading(true);
-    setError(null);
+    setJobsLoading(true);
+    setJobsError(null);
     try {
       const data = await getJobs(params);
       setJobs(data);
@@ -20,16 +22,16 @@ export const useJobs = () => {
       if (axios.isAxiosError(err)) {
         errorMessage = err.response?.data?.detail || errorMessage;
       }
-      setError(errorMessage);
+      setJobsError(errorMessage);
       console.error('fetchJobs error:', err);
     } finally {
-      setLoading(false);
+      setJobsLoading(false);
     }
   }, []);
 
   const fetchJob = useCallback(async (id: number) => {
-    setLoading(true);
-    setError(null);
+    setJobLoading(true);
+    setJobError(null);
     try {
       const data = await getJob(id);
       setJob(data);
@@ -38,16 +40,23 @@ export const useJobs = () => {
       if (axios.isAxiosError(err)) {
         errorMessage = err.response?.data?.detail || errorMessage;
       }
-      setError(errorMessage);
+      setJobError(errorMessage);
       console.error('fetchJob error:', err);
     } finally {
-      setLoading(false);
+      setJobLoading(false);
     }
   }, []);
+
+  const loading = jobsLoading || jobLoading;
+  const error = jobError || jobsError;
 
   return {
     jobs,
     job,
+    jobsLoading,
+    jobLoading,
+    jobsError,
+    jobError,
     loading,
     error,
     fetchJobs,
