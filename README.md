@@ -56,6 +56,31 @@ Use `bash scripts/generate-secrets.sh --force` to overwrite existing files in `s
 docker compose up -d --build
 ```
 
+For faster UI iteration (without waiting on full health dependency chains), you can start only core services for frontend work:
+
+```bash
+docker compose up -d frontend backend postgres redis
+```
+
+For non-Docker frontend development:
+
+```bash
+# from repo root
+cd frontend
+cat > .env <<'EOF'
+VITE_API_TARGET=http://localhost:8000
+EOF
+```
+
+Then install and run the frontend locally:
+
+```bash
+npm install
+npm run dev
+```
+
+The app runs on Vite's default port (`http://localhost:5173`) unless changed in your local config.
+
 ### LLM / Ollama quick test
 
 Make sure the Ollama service is running first (`docker compose up -d ollama`).
