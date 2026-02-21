@@ -49,6 +49,11 @@ RUN python -m playwright install chromium
 
 COPY main.py ./
 COPY src/ ./src/
+COPY alembic.ini ./
+COPY alembic/ ./alembic/
+COPY scripts/ ./scripts/
+
+RUN chmod +x /app/scripts/start-backend.sh
 
 RUN useradd --create-home --uid 1000 appuser && chown -R appuser:appuser /app
 
@@ -59,4 +64,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=5)"
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/app/scripts/start-backend.sh"]

@@ -2,6 +2,7 @@ fastapi
 uvicorn[standard]
 pydantic-settings
 sqlalchemy[asyncio]
+alembic
 asyncpg
 loguru
 python-multipart
