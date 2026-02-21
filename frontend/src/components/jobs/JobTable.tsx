@@ -1,0 +1,79 @@
+import { ChevronRight, ExternalLink } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Job } from '../../types/job';
+
+interface JobTableProps {
+  jobs: Job[];
+}
+
+const JobTable = ({ jobs }: JobTableProps) => {
+  return (
+    <div className="glass-card overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-left">
+          <thead className="bg-white/5 border-b border-white/10">
+            <tr>
+              <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Job Title</th>
+              <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Company</th>
+              <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Location</th>
+              <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Match</th>
+              <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Posted</th>
+              <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-white/5">
+            {jobs.map((job) => (
+              <tr key={job.id} className="hover:bg-white/5 transition-colors group">
+                <td className="px-6 py-4">
+                  <Link to={`/jobs/${job.id}`} className="font-medium text-white hover:text-indigo-400 transition-colors">
+                    {job.title}
+                  </Link>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-[10px] text-slate-500 uppercase font-bold tracking-tighter">{job.platform}</span>
+                  </div>
+                </td>
+                <td className="px-6 py-4 text-slate-300">{job.company}</td>
+                <td className="px-6 py-4 text-slate-400 text-sm">{job.location}</td>
+                <td className="px-6 py-4">
+                  {job.relevanceScore !== null ? (
+                    <div className="flex items-center gap-2">
+                       <div className="w-12 bg-white/5 rounded-full h-1.5 flex-1 max-w-[60px]">
+                        <div
+                          className="bg-indigo-500 h-1.5 rounded-full"
+                          style={{ width: `${job.relevanceScore}%` }}
+                        />
+                      </div>
+                      <span className="text-xs font-bold text-indigo-400">{job.relevanceScore}%</span>
+                    </div>
+                  ) : (
+                    <span className="text-slate-600 text-xs">-</span>
+                  )}
+                </td>
+                <td className="px-6 py-4 text-slate-400 text-sm">
+                  {job.postedDate ? new Date(job.postedDate).toLocaleDateString() : '...'}
+                </td>
+                <td className="px-6 py-4 text-right">
+                  <div className="flex items-center justify-end gap-3 text-slate-500">
+                    <a
+                      href={job.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:text-white transition-colors"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                    </a>
+                    <Link to={`/jobs/${job.id}`} className="hover:text-indigo-400 transition-colors">
+                      <ChevronRight className="w-5 h-5" />
+                    </Link>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+export default JobTable;
