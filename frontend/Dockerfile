@@ -20,8 +20,9 @@ EXPOSE 5173
 CMD ["npm", "run", "dev"]
 
 # Production stage
-FROM nginx:alpine AS prod
+FROM nginxinc/nginx-unprivileged:1.27-alpine AS prod
 COPY --from=build /app/dist /usr/share/nginx/html
-# TODO: Add custom nginx config for SPA routing if needed
-EXPOSE 80
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+USER 101
+EXPOSE 8080
 CMD ["nginx", "-g", "daemon off;"]
