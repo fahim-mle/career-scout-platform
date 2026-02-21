@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.config import settings
 from src.core.exceptions import DuplicateJobError, RepositoryError
 from src.core.metrics import (
+    increment_jobs_created,
     increment_jobs_duplicates,
     increment_jobs_errors,
     increment_jobs_scraped,
@@ -63,6 +64,7 @@ def _record_scraper_result_metrics(
     platform: str,
     *,
     scraped: int = 0,
+    created: int = 0,
     duplicates: int = 0,
     failed: int = 0,
     updated: int = 0,
@@ -74,6 +76,7 @@ def _record_scraper_result_metrics(
     Args:
         platform: Scraper platform label.
         scraped: Number of scraped jobs.
+        created: Number of newly created jobs.
         duplicates: Number of duplicate jobs.
         failed: Number of persistence failures.
         updated: Number of enriched existing jobs.
@@ -85,6 +88,7 @@ def _record_scraper_result_metrics(
     """
     try:
         increment_jobs_scraped(platform=platform, count=max(scraped, 0))
+        increment_jobs_created(platform=platform, count=max(created, 0))
         increment_jobs_duplicates(platform=platform, count=max(duplicates, 0))
         increment_jobs_errors(platform=platform, count=max(failed, 0))
         increment_jobs_updated(platform=platform, count=max(updated, 0))
@@ -96,6 +100,7 @@ def _record_scraper_result_metrics(
             "Skipped scraper result metrics due to invalid values",
             platform=platform,
             scraped=scraped,
+            created=created,
             duplicates=duplicates,
             failed=failed,
             updated=updated,
@@ -811,6 +816,7 @@ def scrape_linkedin_profile_set(self: DatabaseTask) -> dict[str, Any]:
         _record_scraper_result_metrics(
             platform=LINKEDIN_PLATFORM,
             scraped=totals["scraped"],
+            created=totals["created"],
             duplicates=totals["duplicates"],
             failed=totals["failed"],
             updated=totals["updated"],
@@ -939,6 +945,7 @@ def scrape_linkedin_jobs(
         _record_scraper_result_metrics(
             platform=LINKEDIN_PLATFORM,
             scraped=int(result.get("scraped", 0)),
+            created=int(result.get("created", 0)),
             duplicates=int(result.get("duplicates", 0)),
             failed=int(result.get("failed", 0)),
             updated=int(result.get("updated", 0)),
@@ -1057,6 +1064,7 @@ def scrape_seek_jobs(
         _record_scraper_result_metrics(
             platform=SEEK_PLATFORM,
             scraped=int(result.get("scraped", 0)),
+            created=int(result.get("created", 0)),
             duplicates=int(result.get("duplicates", 0)),
             failed=int(result.get("failed", 0)),
             updated=int(result.get("updated", 0)),
@@ -1175,6 +1183,7 @@ def scrape_indeed_jobs(
         _record_scraper_result_metrics(
             platform=INDEED_PLATFORM,
             scraped=int(result.get("scraped", 0)),
+            created=int(result.get("created", 0)),
             duplicates=int(result.get("duplicates", 0)),
             failed=int(result.get("failed", 0)),
             updated=int(result.get("updated", 0)),

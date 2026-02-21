@@ -45,6 +45,104 @@ SEEK_SCRAPE_TASK_RUN = scraper_tasks.scrape_seek_jobs.run.__func__  # type: igno
 INDEED_SCRAPE_TASK_RUN = scraper_tasks.scrape_indeed_jobs.run.__func__  # type: ignore[attr-defined]
 
 
+def test_record_scraper_result_metrics_increments_jobs_created(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Result metric helper emits jobs_created_total using created count."""
+    created_calls: list[dict[str, Any]] = []
+
+    def fake_increment_jobs_created(platform: str, count: int = 1) -> None:
+        created_calls.append({"platform": platform, "count": count})
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "increment_jobs_created",
+        fake_increment_jobs_created,
+    )
+    monkeypatch.setattr(
+        scraper_tasks,
+        "increment_jobs_scraped",
+        lambda platform, count=1: None,
+    )
+    monkeypatch.setattr(
+        scraper_tasks,
+        "increment_jobs_duplicates",
+        lambda platform, count=1: None,
+    )
+    monkeypatch.setattr(
+        scraper_tasks,
+        "increment_jobs_errors",
+        lambda platform, count=1: None,
+    )
+    monkeypatch.setattr(
+        scraper_tasks,
+        "increment_jobs_updated",
+        lambda platform, count=1: None,
+    )
+
+    scraper_tasks._record_scraper_result_metrics(
+        platform="linkedin",
+        scraped=5,
+        created=2,
+        duplicates=1,
+        failed=0,
+        updated=1,
+        jobs_in_database=4,
+        task_id="task-123",
+    )
+
+    assert created_calls == [{"platform": "linkedin", "count": 2}]
+
+
+def test_scrape_linkedin_jobs_passes_created_count_to_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LinkedIn task forwards created count into metric recording helper."""
+    task = FakeBoundTask()
+    monkeypatch.setattr(scraper_tasks.settings, "SCRAPER_ENABLED", True)
+
+    async def fake_scrape_and_persist(**_kwargs: Any) -> dict[str, Any]:
+        return {
+            "status": "success",
+            "platform": "linkedin",
+            "query": "python",
+            "location": "remote",
+            "scraped": 3,
+            "created": 2,
+            "updated": 0,
+            "duplicates": 1,
+            "failed": 0,
+            "enrichment_job_ids": [],
+        }
+
+    metric_payloads: list[dict[str, Any]] = []
+
+    def fake_record_scraper_result_metrics(**kwargs: Any) -> None:
+        metric_payloads.append(kwargs)
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_run_linkedin_scrape_and_persist",
+        fake_scrape_and_persist,
+    )
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_record_scraper_result_metrics",
+        fake_record_scraper_result_metrics,
+    )
+    monkeypatch.setattr(
+        scraper_tasks,
+        "_enqueue_enrichment_task",
+        lambda **_kwargs: None,
+    )
+
+    result = SCRAPE_TASK_RUN(task, query="python", location="remote", limit=5)
+
+    assert result["status"] == "success"
+    assert len(metric_payloads) == 1
+    assert metric_payloads[0]["created"] == 2
+
+
 def test_scrape_linkedin_jobs_returns_skipped_when_scraper_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
