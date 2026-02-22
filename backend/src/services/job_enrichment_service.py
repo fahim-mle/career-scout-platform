@@ -45,23 +45,32 @@ SALARY_SINGLE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 SECTION_HEADER_KEYWORDS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"\babout(?:\s+the\s+job)?\b", re.IGNORECASE), "About"),
+    (re.compile(r"(?:about(?:\s+the\s+job)?)", re.IGNORECASE), "About"),
     (
         re.compile(
-            r"\b(responsibilities|what\s+you(?:'|\u2019)ll\s+do|duties|role\s+overview)\b",
+            r"(?:responsibilities|responsibility|key\s+responsibilities|"
+            r"what\s+you(?:'|\u2019)ll\s+do|duties|role\s+overview)",
             re.IGNORECASE,
         ),
         "Responsibilities",
     ),
     (
         re.compile(
-            r"\b(requirements|qualifications|what\s+you(?:'|\u2019)ll\s+need|skills|experience)\b",
+            r"(?:requirements|requirement|qualifications|qualification|"
+            r"what\s+you(?:'|\u2019)ll\s+need|skills|key\s+skills|experience|"
+            r"experience\s+required)",
             re.IGNORECASE,
         ),
         "Requirements",
     ),
-    (re.compile(r"\b(benefits|perks|what\s+we\s+offer)\b", re.IGNORECASE), "Benefits"),
-    (re.compile(r"\b(company|about\s+us|who\s+we\s+are)\b", re.IGNORECASE), "Company"),
+    (
+        re.compile(r"(?:benefits|perks|what\s+we\s+offer)", re.IGNORECASE),
+        "Benefits",
+    ),
+    (
+        re.compile(r"(?:company|about\s+us|who\s+we\s+are)", re.IGNORECASE),
+        "Company",
+    ),
 )
 LINE_BULLET_PREFIX = re.compile(r"^(?:[-*•]|\d+[\.)])\s+")
 
@@ -580,7 +589,7 @@ class JobEnrichmentService:
             return None
 
         for pattern, normalized_title in SECTION_HEADER_KEYWORDS:
-            if pattern.search(heading):
+            if pattern.fullmatch(heading):
                 return normalized_title
 
         return None
@@ -639,10 +648,13 @@ class JobEnrichmentService:
             payload.update(self._salary_range_to_enrichment_fields(salary_range))
 
         description_text = ""
-        if isinstance(getattr(job, "description_full", None), str):
-            description_text = job.description_full or ""
-        elif isinstance(getattr(job, "description_short", None), str):
-            description_text = job.description_short or ""
+        for candidate in (
+            getattr(job, "description_full", None),
+            getattr(job, "description_short", None),
+        ):
+            if isinstance(candidate, str) and candidate.strip():
+                description_text = candidate
+                break
 
         description_sections = self.extract_description_sections(description_text)
         if description_sections:

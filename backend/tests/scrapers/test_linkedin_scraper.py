@@ -83,44 +83,17 @@ def test_sanitize_description_removes_trailing_more_artifact() -> None:
     assert result.endswith("FastAPI.")
 
 
-def test_normalize_text_deduplicates_adjacent_repeated_title_phrase() -> None:
-    """Title normalization should collapse repeated adjacent title phrases."""
-    raw_title = "Software Engineer Software Engineer"
+def test_normalize_text_collapses_whitespace() -> None:
+    """Generic text normalization should collapse repeated whitespace."""
+    raw_title = "  Software   Engineer   "
 
     result = LinkedInScraper._normalize_text(raw_title)
 
     assert result == "Software Engineer"
 
 
-def test_normalize_text_deduplicates_separator_repeated_title_phrase() -> None:
-    """Title normalization should collapse separator-joined repeated phrases."""
-    raw_title = "Software Engineer - Software Engineer"
-
-    result = LinkedInScraper._normalize_text(raw_title)
-
-    assert result == "Software Engineer"
-
-
-def test_normalize_text_deduplicates_single_token_repeated_title_phrase() -> None:
-    """Title normalization should collapse repeated one-token phrases."""
-    raw_title = "Engineer Engineer"
-
-    result = LinkedInScraper._normalize_text(raw_title)
-
-    assert result == "Engineer"
-
-
-def test_normalize_text_deduplicates_single_token_separator_phrase() -> None:
-    """Title normalization should collapse separator-joined one-token phrases."""
-    raw_title = "Engineer - Engineer"
-
-    result = LinkedInScraper._normalize_text(raw_title)
-
-    assert result == "Engineer"
-
-
-def test_normalize_text_keeps_non_duplicate_title_unchanged() -> None:
-    """Title normalization should keep distinct titles unchanged."""
+def test_normalize_text_keeps_non_duplicate_text_unchanged() -> None:
+    """Generic text normalization should preserve non-empty content."""
     raw_title = "Senior Software Engineer"
 
     result = LinkedInScraper._normalize_text(raw_title)
@@ -128,13 +101,13 @@ def test_normalize_text_keeps_non_duplicate_title_unchanged() -> None:
     assert result == "Senior Software Engineer"
 
 
-def test_normalize_text_keeps_legitimate_composite_title_unchanged() -> None:
-    """Normalization should keep legitimate composite titles intact."""
-    raw_title = "Sales and Marketing Manager"
+def test_normalize_text_does_not_apply_title_specific_deduplication() -> None:
+    """Generic text normalization should not collapse repeated title phrases."""
+    raw_title = "Software Engineer - Software Engineer"
 
     result = LinkedInScraper._normalize_text(raw_title)
 
-    assert result == "Sales and Marketing Manager"
+    assert result == "Software Engineer - Software Engineer"
 
 
 @pytest.mark.asyncio

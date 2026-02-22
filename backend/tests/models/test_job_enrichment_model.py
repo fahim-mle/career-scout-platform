@@ -35,6 +35,7 @@ def test_description_sections_validation_accepts_valid_shape() -> None:
         "not-a-list",
         [{"title": "", "items": ["x"]}],
         [{"title": "Overview", "items": [""]}],
+        [{"title": "Overview", "items": []}],
         [{"title": "Overview", "items": "not-a-list"}],
     ],
 )

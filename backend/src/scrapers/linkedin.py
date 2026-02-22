@@ -1083,7 +1083,7 @@ class LinkedInScraper(BaseScraper):
 
     @staticmethod
     def _normalize_text(value: str) -> str | None:
-        """Normalize text by collapsing whitespace and safe title artifacts.
+        """Normalize text by collapsing whitespace only.
 
         Args:
             value: Raw text value.
@@ -1091,7 +1091,7 @@ class LinkedInScraper(BaseScraper):
         Returns:
             Normalized string or ``None`` when the value is empty.
         """
-        return normalize_job_title(value)
+        return normalize_title_whitespace(value)
 
     async def _assert_no_challenge(self, stage: str) -> None:
         """Raise when LinkedIn challenge/captcha cues are detected.

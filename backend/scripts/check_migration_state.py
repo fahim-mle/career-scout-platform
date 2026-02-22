@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from sqlalchemy import text
+from sqlalchemy import Text, bindparam, text
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from src.core.config import settings
@@ -36,9 +37,9 @@ async def main() -> int:
                     SELECT COUNT(*)
                     FROM information_schema.tables
                     WHERE table_schema = 'public'
-                      AND table_name = ANY(:table_names)
+                      AND table_name = ANY(CAST(:table_names AS text[]))
                     """
-                ),
+                ).bindparams(bindparam("table_names", type_=ARRAY(Text()))),
                 {"table_names": list(APP_TABLES)},
             )
             existing_tables = int(table_count.scalar_one())

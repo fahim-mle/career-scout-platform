@@ -352,6 +352,47 @@ def test_extract_description_sections_deduplicates_adjacent_items_case_insensiti
     ]
 
 
+def test_extract_description_sections_does_not_match_heading_inside_bullets() -> None:
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+
+    result = service.extract_description_sections(
+        """
+        Responsibilities
+        - Experience with Python and FastAPI
+        - Collaborate with product and design
+        """
+    )
+
+    assert result == [
+        {
+            "title": "Responsibilities",
+            "items": [
+                "Experience with Python and FastAPI",
+                "Collaborate with product and design",
+            ],
+        }
+    ]
+
+
+def test_extract_description_sections_maps_key_skills_heading_to_requirements() -> None:
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+
+    result = service.extract_description_sections(
+        """
+        Key Skills
+        - Python
+        - FastAPI
+        """
+    )
+
+    assert result == [
+        {
+            "title": "Requirements",
+            "items": ["Python", "FastAPI"],
+        }
+    ]
+
+
 def test_build_enrichment_payload_maps_salary_range_to_processed_columns() -> None:
     service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
     job = make_job(
@@ -371,6 +412,26 @@ def test_build_enrichment_payload_maps_salary_range_to_processed_columns() -> No
     assert isinstance(result.get("description_sections"), list)
     assert result["description_sections"][0]["title"] == "Overview"
     assert result["status"] == "success"
+
+
+def test_build_enrichment_payload_uses_first_non_empty_description_for_sections() -> (
+    None
+):
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+    job = make_job(
+        title="Backend Engineer",
+        description_full="   ",
+        description_short="Key Skills\n- Python\n- FastAPI",
+    )
+
+    result = service.build_enrichment_payload(cast(Job, job))
+
+    assert result["description_sections"] == [
+        {
+            "title": "Requirements",
+            "items": ["Python", "FastAPI"],
+        }
+    ]
 
 
 def test_salary_range_to_enrichment_fields_keeps_salary_period_nullable() -> None:

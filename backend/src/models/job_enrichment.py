@@ -158,8 +158,10 @@ class JobEnrichment(BaseModel):
                 raise ValueError(
                     "description_sections.title must be a non-empty string"
                 )
-            if not isinstance(items, list) or any(
-                not isinstance(item, str) or not item.strip() for item in items
+            if (
+                not isinstance(items, list)
+                or not items
+                or any(not isinstance(item, str) or not item.strip() for item in items)
             ):
                 raise ValueError(
                     "description_sections.items must be a list of non-empty strings"
