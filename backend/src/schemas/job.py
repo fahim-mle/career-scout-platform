@@ -22,6 +22,8 @@ class JobCreate(BaseModel):
     job_type: str | None = Field(default=None, max_length=50)
     description_short: str | None = None
     description_full: str | None = None
+    scraped_jobs: str | None = None
+    metadata: dict[str, Any] | None = None
     posted_date: date | None = None
     scraped_at: datetime | None = None
     is_active: bool = True
@@ -43,6 +45,8 @@ class JobUpdate(BaseModel):
     job_type: str | None = Field(default=None, max_length=50)
     description_short: str | None = None
     description_full: str | None = None
+    scraped_jobs: str | None = None
+    metadata: dict[str, Any] | None = None
     posted_date: date | None = None
     scraped_at: datetime | None = None
     is_active: bool | None = None
@@ -67,6 +71,11 @@ class RawJobResponse(BaseModel):
     job_type: str | None
     description_short: str | None
     description_full: str | None
+    scraped_jobs: str | None = None
+    metadata: dict[str, Any] | None = Field(
+        default=None,
+        validation_alias="platform_metadata",
+    )
     posted_date: date | None
     scraped_at: datetime
     is_active: bool
@@ -91,6 +100,11 @@ class EnrichedJobResponse(BaseModel):
     location: str
     description_short: str | None
     description_full: str | None
+    scraped_jobs: str | None = None
+    metadata: dict[str, Any] | None = Field(
+        default=None,
+        validation_alias="platform_metadata",
+    )
     posted_date: date | None
     scraped_at: datetime
     is_active: bool

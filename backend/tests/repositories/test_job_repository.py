@@ -23,11 +23,11 @@ def build_job_data(
 ) -> dict[str, object]:
     """
     Create a valid job payload dictionary for repository create calls.
-    
+
     Parameters:
         external_id (str): Identifier of the job in the external platform.
         platform (str): Source platform name (used to form the job URL); defaults to "linkedin".
-    
+
     Returns:
         dict: A job payload dictionary with keys `external_id`, `platform`, `url`, `title`, `company`, and `location`.
     """
@@ -291,7 +291,7 @@ async def test_get_by_id_wraps_sqlalchemy_error(
     async def failing_execute(*_args: object, **_kwargs: object) -> object:
         """
         Force a SQLAlchemyError with message "boom".
-        
+
         Raises:
             SQLAlchemyError: Always raised with message "boom".
         """
@@ -313,7 +313,7 @@ async def test_get_all_wraps_sqlalchemy_error(
     async def failing_execute(*_args: object, **_kwargs: object) -> object:
         """
         Force a SQLAlchemyError with message "boom".
-        
+
         Raises:
             SQLAlchemyError: Always raised with message "boom".
         """
@@ -334,6 +334,14 @@ async def test_create_accepts_optional_json_and_dates(db_session: AsyncSession) 
         "posted_date": date(2026, 2, 1),
         "skills": ["Python", "SQLAlchemy"],
         "salary_range": {"min": 100000, "max": 140000, "currency": "AUD"},
+        "scraped_jobs": "raw linkedin payload",
+        "platform_metadata": {
+            "posted_date_text": "2 days ago",
+            "number_of_applicants": "37 applicants",
+            "promoted_by_hirer": True,
+            "actively_reviewing_applicants": False,
+            "platform": "linkedin",
+        },
     }
 
     created = await repo.create(payload_with_optional)
@@ -341,3 +349,11 @@ async def test_create_accepts_optional_json_and_dates(db_session: AsyncSession) 
     assert created.posted_date == date(2026, 2, 1)
     assert created.skills == ["Python", "SQLAlchemy"]
     assert created.salary_range == {"min": 100000, "max": 140000, "currency": "AUD"}
+    assert created.scraped_jobs == "raw linkedin payload"
+    assert created.platform_metadata == {
+        "posted_date_text": "2 days ago",
+        "number_of_applicants": "37 applicants",
+        "promoted_by_hirer": True,
+        "actively_reviewing_applicants": False,
+        "platform": "linkedin",
+    }

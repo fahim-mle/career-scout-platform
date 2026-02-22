@@ -317,6 +317,7 @@ class JobService:
         try:
             job_data = payload.model_dump(mode="python", exclude_unset=True)
             job_data["url"] = str(payload.url)
+            self._map_platform_metadata_field(job_data)
             self._normalize_title_for_persistence(job_data, log=log)
             job = await self.repo.create(job_data)
         except DuplicateJobError as exc:
@@ -383,6 +384,7 @@ class JobService:
             update_data["url"] = str(update_data["url"])
             self._validate_url_for_platform(str(update_data["url"]), existing.platform)
 
+        self._map_platform_metadata_field(update_data)
         self._normalize_title_for_persistence(update_data, log=log)
         self._validate_description_growth(existing=existing, updates=update_data)
 
@@ -573,6 +575,21 @@ class JobService:
                 title_raw=title_preview_for_log(raw_title),
                 title_normalized=title_preview_for_log(normalized_title),
             ).info("Normalized job title before persistence")
+
+    @staticmethod
+    def _map_platform_metadata_field(payload: dict[str, object]) -> None:
+        """Map API-facing ``metadata`` field to ORM ``platform_metadata``.
+
+        Args:
+            payload: Mutable create/update payload.
+
+        Returns:
+            None.
+        """
+        if "metadata" not in payload:
+            return
+
+        payload["platform_metadata"] = payload.pop("metadata")
 
     @staticmethod
     def _domain_matches(hostname: str, expected: str) -> bool:

@@ -37,6 +37,8 @@ def make_job(**overrides: Any) -> SimpleNamespace:
         "job_type": None,
         "description_short": "Short text",
         "description_full": "Longer full description",
+        "scraped_jobs": None,
+        "platform_metadata": None,
         "posted_date": date.today(),
         "scraped_at": now,
         "is_active": True,
@@ -252,6 +254,38 @@ async def test_create_job_success_returns_response() -> None:
     assert result.id == 1
     assert result.external_id == "new-1"
     assert result.platform == "linkedin"
+
+
+@pytest.mark.asyncio
+async def test_create_job_accepts_optional_platform_metadata() -> None:
+    service = make_service(FakeJobRepository())
+    payload = JobCreate(
+        external_id="new-meta-1",
+        platform="linkedin",
+        url="https://linkedin.com/jobs/new-meta-1",
+        title="Backend Engineer",
+        company="Acme",
+        location="Brisbane",
+        scraped_jobs="raw block",
+        metadata={
+            "platform": "linkedin",
+            "posted_date_text": "1 week ago",
+            "number_of_applicants": "23 applicants",
+            "promoted_by_hirer": True,
+            "actively_reviewing_applicants": False,
+        },
+    )
+
+    result = await service.create_job(payload)
+
+    assert result.scraped_jobs == "raw block"
+    assert result.metadata == {
+        "platform": "linkedin",
+        "posted_date_text": "1 week ago",
+        "number_of_applicants": "23 applicants",
+        "promoted_by_hirer": True,
+        "actively_reviewing_applicants": False,
+    }
 
 
 @pytest.mark.asyncio

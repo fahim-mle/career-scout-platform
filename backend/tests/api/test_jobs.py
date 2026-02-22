@@ -30,6 +30,8 @@ ENRICHED_REQUIRED_FIELDS = {
     "location",
     "description_short",
     "description_full",
+    "scraped_jobs",
+    "metadata",
     "posted_date",
     "scraped_at",
     "is_active",
@@ -118,6 +120,27 @@ class TestJobsAPI:
         assert listed_job["enrichment_version"] is None
         assert listed_job["enrichment_updated_at"] is None
         assert listed_job["description_sections"] is None
+
+    @pytest.mark.asyncio
+    async def test_create_job_accepts_generic_metadata(
+        self, client: AsyncClient
+    ) -> None:
+        payload = build_job_payload("api-create-meta-1")
+        payload["scraped_jobs"] = "<div id='job-details'><p>Role Overview</p></div>"
+        payload["metadata"] = {
+            "platform": "linkedin",
+            "posted_date_text": "1 day ago",
+            "number_of_applicants": "Over 100 applicants",
+            "promoted_by_hirer": True,
+            "actively_reviewing_applicants": True,
+        }
+
+        response = await client.post("/api/v1/jobs", json=payload)
+
+        assert response.status_code == 201
+        body = response.json()
+        assert body["scraped_jobs"] == payload["scraped_jobs"]
+        assert body["metadata"] == payload["metadata"]
 
     @pytest.mark.asyncio
     async def test_list_jobs_with_data(self, client: AsyncClient) -> None:
