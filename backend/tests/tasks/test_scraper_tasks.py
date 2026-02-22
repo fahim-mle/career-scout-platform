@@ -406,6 +406,48 @@ def test_build_job_update_payload_empty_when_no_new_values() -> None:
     assert result == {}
 
 
+def test_build_job_update_payload_sets_missing_scraped_jobs_and_metadata() -> None:
+    """Update helper should enrich raw html and metadata when missing."""
+
+    existing = SimpleNamespace(
+        description_full="full",
+        description_short="short",
+        job_type="Contract",
+        scraped_jobs=None,
+        platform_metadata=None,
+    )
+    scraped = {
+        "scraped_jobs": '<div id="job-details">About the job</div>',
+        "platform_metadata": {"platform": "linkedin", "location": "Sydney"},
+    }
+
+    result = scraper_tasks._build_job_update_payload(existing, scraped)
+
+    assert result == {
+        "scraped_jobs": '<div id="job-details">About the job</div>',
+        "platform_metadata": {"platform": "linkedin", "location": "Sydney"},
+    }
+
+
+def test_normalize_scraped_payload_maps_metadata_to_platform_metadata() -> None:
+    """Normalizer should map generic metadata key for ORM compatibility."""
+
+    normalized = scraper_tasks._normalize_scraped_payload(
+        {
+            "external_id": "123",
+            "metadata": {"platform": "linkedin", "location": "Remote"},
+            "scraped_jobs": '<div id="job-details">Role details</div>',
+        }
+    )
+
+    assert "metadata" not in normalized
+    assert normalized["platform_metadata"] == {
+        "platform": "linkedin",
+        "location": "Remote",
+    }
+    assert normalized["scraped_jobs"] == '<div id="job-details">Role details</div>'
+
+
 def test_build_job_update_payload_updates_title_when_duplicate_artifact_corrected() -> (
     None
 ):

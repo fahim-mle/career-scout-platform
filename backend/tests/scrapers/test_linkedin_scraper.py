@@ -2,7 +2,38 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.scrapers.linkedin import LinkedInScraper
+
+
+class _FakeElement:
+    """Minimal fake Playwright element for LinkedIn scraper unit tests."""
+
+    def __init__(self, *, text: str = "", outer_html: str = "") -> None:
+        self._text = text
+        self._outer_html = outer_html
+
+    async def inner_text(self) -> str:
+        """Return fake element text payload."""
+        return self._text
+
+    async def evaluate(self, expression: str) -> str:
+        """Return fake outerHTML for the expected evaluate expression."""
+        if expression != "node => node.outerHTML":
+            raise ValueError("Unexpected expression")
+        return self._outer_html
+
+
+class _FakePage:
+    """Minimal fake Playwright page for selector-based extraction tests."""
+
+    def __init__(self, elements: dict[str, _FakeElement]) -> None:
+        self._elements = elements
+
+    async def query_selector(self, selector: str) -> _FakeElement | None:
+        """Return mapped fake element for a selector or ``None``."""
+        return self._elements.get(selector)
 
 
 def test_sanitize_description_prefers_about_the_job_block() -> None:
@@ -85,3 +116,70 @@ def test_normalize_text_keeps_legitimate_composite_title_unchanged() -> None:
     result = LinkedInScraper._normalize_text(raw_title)
 
     assert result == "Sales and Marketing Manager"
+
+
+@pytest.mark.asyncio
+async def test_extract_html_from_page_selectors_returns_raw_html_when_present() -> None:
+    """Raw HTML extraction should return the first matching selector block."""
+    scraper = LinkedInScraper()
+    scraper.page = _FakePage(
+        {
+            "#job-details": _FakeElement(
+                outer_html=(
+                    '<div id="job-details"><p>About the job</p><p>Build APIs.</p></div>'
+                )
+            )
+        }
+    )
+
+    raw_html = await scraper._extract_html_from_page_selectors(
+        selectors=("#job-details", ".jobs-box__html-content"),
+        extraction_label="unit_test",
+    )
+
+    assert raw_html is not None
+    assert raw_html.startswith('<div id="job-details">')
+    assert "Build APIs." in raw_html
+
+
+@pytest.mark.asyncio
+async def test_extract_html_from_page_selectors_returns_none_when_missing() -> None:
+    """Raw HTML extraction should be resilient when no selector exists."""
+    scraper = LinkedInScraper()
+    scraper.page = _FakePage(elements={})
+
+    raw_html = await scraper._extract_html_from_page_selectors(
+        selectors=("#job-details", ".jobs-box__html-content"),
+        extraction_label="unit_test",
+    )
+
+    assert raw_html is None
+
+
+def test_parse_top_card_metadata_text_maps_all_expected_fields() -> None:
+    """Top-card parser should extract location/date/applicants and status flags."""
+    metadata = LinkedInScraper._parse_top_card_metadata_text(
+        (
+            "Sydney, New South Wales, Australia · 1 day ago · "
+            "Over 100 applicants · Promoted by hirer · Actively reviewing applicants"
+        )
+    )
+
+    assert metadata["location"] == "Sydney, New South Wales, Australia"
+    assert metadata["date_posted"] == "1 day ago"
+    assert metadata["number_of_applicants"] == "Over 100 applicants"
+    assert metadata["promoted_by_hirer"] is True
+    assert metadata["actively_reviewing_applicants"] is True
+
+
+def test_parse_top_card_metadata_text_handles_missing_fields() -> None:
+    """Top-card parser should keep defaults when optional fields are absent."""
+    metadata = LinkedInScraper._parse_top_card_metadata_text(
+        "Melbourne, Victoria, Australia · Promoted by hirer"
+    )
+
+    assert metadata["location"] == "Melbourne, Victoria, Australia"
+    assert metadata["date_posted"] is None
+    assert metadata["number_of_applicants"] is None
+    assert metadata["promoted_by_hirer"] is True
+    assert metadata["actively_reviewing_applicants"] is False

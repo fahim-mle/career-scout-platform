@@ -171,6 +171,8 @@ def _build_job_update_payload(
         "description_full",
         "description_short",
         "job_type",
+        "scraped_jobs",
+        "platform_metadata",
     )
     updates: dict[str, Any] = {}
 
@@ -189,6 +191,24 @@ def _build_job_update_payload(
         updates["title"] = incoming_title
 
     return updates
+
+
+def _normalize_scraped_payload(scraped_payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize scraper payload fields for repository compatibility.
+
+    Args:
+        scraped_payload: Raw payload returned by platform scraper.
+
+    Returns:
+        Payload using repository-compatible field names.
+    """
+    normalized_payload = dict(scraped_payload)
+    metadata_payload = normalized_payload.pop("metadata", None)
+
+    if metadata_payload is not None and "platform_metadata" not in normalized_payload:
+        normalized_payload["platform_metadata"] = metadata_payload
+
+    return normalized_payload
 
 
 def _should_update_title_from_duplicate_artifact(
@@ -381,7 +401,8 @@ async def _run_scrape_and_persist(
     async with get_session() as db_session:
         job_repository = JobRepository(db_session)
         for job_payload in scraped_jobs:
-            external_id = str(job_payload.get("external_id", ""))
+            normalized_payload = _normalize_scraped_payload(job_payload)
+            external_id = str(normalized_payload.get("external_id", ""))
 
             if not external_id:
                 failed_count += 1
@@ -400,7 +421,7 @@ async def _run_scrape_and_persist(
                 if existing_job is not None:
                     update_payload = _build_job_update_payload(
                         existing_job=existing_job,
-                        scraped_payload=job_payload,
+                        scraped_payload=normalized_payload,
                     )
                     if update_payload:
                         updated_job = await job_repository.update(
@@ -414,7 +435,7 @@ async def _run_scrape_and_persist(
                     duplicate_count += 1
                     continue
 
-                created_job = await job_repository.create(job_payload)
+                created_job = await job_repository.create(normalized_payload)
                 enrichment_job_ids.add(created_job.id)
                 created_count += 1
             except DuplicateJobError:
