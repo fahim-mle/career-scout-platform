@@ -479,6 +479,17 @@ class TestJobsAPI:
         assert response.status_code == 422
 
     @pytest.mark.asyncio
+    async def test_create_job_rejects_oversized_scraped_jobs_payload(
+        self, client: AsyncClient
+    ) -> None:
+        payload = build_job_payload("api-invalid-scraped-jobs-1")
+        payload["scraped_jobs"] = "x" * 100_001
+
+        response = await client.post("/api/v1/jobs", json=payload)
+
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
     async def test_create_job_future_date_rejected(self, client: AsyncClient) -> None:
         payload = build_job_payload("api-future-1")
         payload["posted_date"] = (date.today() + timedelta(days=1)).isoformat()

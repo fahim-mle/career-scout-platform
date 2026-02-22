@@ -36,7 +36,7 @@ def collapse_adjacent_duplicate_title_phrase(value: str) -> str:
         return value
 
     tokens = compact.split(" ")
-    if len(tokens) < 4:
+    if len(tokens) < 2:
         return compact
 
     midpoint = len(tokens) // 2
@@ -60,9 +60,6 @@ def collapse_adjacent_duplicate_title_phrase(value: str) -> str:
 
     left_tokens = left.split(" ")
     right_tokens = right.split(" ")
-    if len(left_tokens) < 2 or len(right_tokens) < 2:
-        return compact
-
     if _tokens_match_exact_phrase(left_tokens, right_tokens):
         return left
 

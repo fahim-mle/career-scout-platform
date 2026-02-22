@@ -31,9 +31,17 @@ def upgrade() -> None:
             nullable=True,
         ),
     )
+    op.create_index(
+        "ix_jobs_metadata_gin",
+        "jobs",
+        ["metadata"],
+        unique=False,
+        postgresql_using="gin",
+    )
 
 
 def downgrade() -> None:
     """Remove raw scrape payload and generic metadata columns."""
+    op.drop_index("ix_jobs_metadata_gin", table_name="jobs")
     op.drop_column("jobs", "metadata")
     op.drop_column("jobs", "scraped_jobs")

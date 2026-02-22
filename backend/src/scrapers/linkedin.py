@@ -77,6 +77,7 @@ class LinkedInScraper(BaseScraper):
     MAX_DETAIL_EXTRACTION_ATTEMPTS = 2
     SHORT_DESCRIPTION_MAX_LENGTH = 360
     MAX_DESCRIPTION_FULL_LENGTH = 3_000
+    MAX_FALLBACK_DESCRIPTION_HTML_LENGTH = 100_000
     DESCRIPTION_END_MARKERS = (
         "Set alert for similar jobs",
         "Interested in working with us in the future?",
@@ -355,9 +356,9 @@ class LinkedInScraper(BaseScraper):
             description_full = await self._extract_description_with_fallback()
         description_full = self._sanitize_description_text(description_full)
 
-        scraped_jobs: str | None = None
+        raw_description_html: str | None = None
         try:
-            scraped_jobs = await self._extract_description_html_with_fallback()
+            raw_description_html = await self._extract_description_html_with_fallback()
         except Exception as exc:
             logger.bind(
                 scraper=self.__class__.__name__,
@@ -379,7 +380,7 @@ class LinkedInScraper(BaseScraper):
             "description_full": description_full,
             "description_short": self._build_short_description(description_full),
             "job_type": await self._extract_job_type(),
-            "scraped_jobs": scraped_jobs,
+            "scraped_jobs": raw_description_html,
             "metadata": metadata,
         }
 
@@ -418,10 +419,11 @@ class LinkedInScraper(BaseScraper):
         logger.bind(scraper=self.__class__.__name__).info(
             "Falling back to broad selectors for raw LinkedIn description HTML"
         )
-        return await self._extract_html_from_page_selectors(
+        fallback_html = await self._extract_html_from_page_selectors(
             selectors=self.DESCRIPTION_FALLBACK_SELECTORS,
             extraction_label="description_html_fallback",
         )
+        return self._cap_fallback_description_html(fallback_html)
 
     async def _extract_top_card_metadata(self) -> dict[str, Any]:
         """Extract LinkedIn top-card metadata into generic schema payload.
@@ -793,12 +795,6 @@ class LinkedInScraper(BaseScraper):
         if not normalized:
             return parsed
 
-        lowered = normalized.lower()
-        parsed["promoted_by_hirer"] = "promoted by hirer" in lowered
-        parsed["actively_reviewing_applicants"] = (
-            "actively reviewing applicants" in lowered
-        )
-
         segments = [
             segment
             for segment in (
@@ -826,6 +822,28 @@ class LinkedInScraper(BaseScraper):
                 parsed["location"] = segment
 
         return parsed
+
+    @classmethod
+    def _cap_fallback_description_html(cls, value: str | None) -> str | None:
+        """Cap broad-fallback HTML payload size before persistence.
+
+        Args:
+            value: Raw fallback HTML payload.
+
+        Returns:
+            Original payload when within the safety limit, otherwise a truncated copy.
+        """
+        if value is None:
+            return None
+        if len(value) <= cls.MAX_FALLBACK_DESCRIPTION_HTML_LENGTH:
+            return value
+
+        logger.bind(
+            scraper=cls.__name__,
+            original_length=len(value),
+            capped_length=cls.MAX_FALLBACK_DESCRIPTION_HTML_LENGTH,
+        ).warning("Capped LinkedIn fallback raw description HTML payload")
+        return value[: cls.MAX_FALLBACK_DESCRIPTION_HTML_LENGTH]
 
     @staticmethod
     def _normalize_metadata_text(value: str | None) -> str | None:
@@ -1074,23 +1092,6 @@ class LinkedInScraper(BaseScraper):
             Normalized string or ``None`` when the value is empty.
         """
         return normalize_job_title(value)
-
-    @staticmethod
-    def _collapse_adjacent_duplicate_phrase(value: str) -> str:
-        """Collapse exact adjacent repeated phrase artifacts.
-
-        This is intentionally conservative and only collapses full-string patterns
-        where the first half and second half are exact token-by-token matches,
-        such as ``"Software Engineer Software Engineer"``.
-
-        Args:
-            value: Whitespace-normalized text.
-
-        Returns:
-            Deduplicated phrase when an exact adjacent duplicate artifact is
-            detected, otherwise the original value.
-        """
-        return normalize_job_title(value) or value
 
     async def _assert_no_challenge(self, stage: str) -> None:
         """Raise when LinkedIn challenge/captcha cues are detected.

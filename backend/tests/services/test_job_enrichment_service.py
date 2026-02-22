@@ -302,6 +302,56 @@ def test_extract_description_sections_groups_headings_and_bullets() -> None:
     ]
 
 
+def test_extract_description_sections_returns_empty_for_blank_input() -> None:
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+
+    result = service.extract_description_sections("   \n\t  ")
+
+    assert result == []
+
+
+def test_extract_description_sections_drops_empty_heading_section() -> None:
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+
+    result = service.extract_description_sections(
+        """
+        About the job
+        Requirements
+        - Python
+        """
+    )
+
+    assert result == [
+        {
+            "title": "Requirements",
+            "items": ["Python"],
+        }
+    ]
+
+
+def test_extract_description_sections_deduplicates_adjacent_items_case_insensitive() -> (
+    None
+):
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+
+    result = service.extract_description_sections(
+        """
+        Requirements
+        - Python
+        - python
+        - FastAPI
+        - FASTAPI
+        """
+    )
+
+    assert result == [
+        {
+            "title": "Requirements",
+            "items": ["Python", "FastAPI"],
+        }
+    ]
+
+
 def test_build_enrichment_payload_maps_salary_range_to_processed_columns() -> None:
     service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
     job = make_job(

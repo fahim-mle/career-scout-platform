@@ -16,9 +16,14 @@ elif [ "$MIGRATION_STATE_EXIT" -ne 0 ]; then
 fi
 
 if ! python -m alembic upgrade head; then
-  echo "Alembic upgrade failed; attempting legacy schema recovery by stamping head."
-  python -m alembic stamp head
-  python -m alembic upgrade head
+  echo "Alembic upgrade failed; refusing automatic stamp fallback to avoid masking migration drift."
+  if [ "${ALLOW_UNSAFE_ALEMBIC_STAMP:-false}" = "true" ]; then
+    echo "ALLOW_UNSAFE_ALEMBIC_STAMP=true set; applying unsafe fallback stamp for local recovery."
+    python -m alembic stamp head
+    python -m alembic upgrade head
+  else
+    exit 1
+  fi
 fi
 
 echo "Starting backend server..."

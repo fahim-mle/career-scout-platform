@@ -9,6 +9,8 @@ from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field
 
 from src.models.job import ALLOWED_PLATFORMS
 
+MAX_SCRAPED_JOBS_LENGTH = 100_000
+
 
 class JobCreate(BaseModel):
     """Schema for creating a new job listing."""
@@ -22,7 +24,7 @@ class JobCreate(BaseModel):
     job_type: str | None = Field(default=None, max_length=50)
     description_short: str | None = None
     description_full: str | None = None
-    scraped_jobs: str | None = None
+    scraped_jobs: str | None = Field(default=None, max_length=MAX_SCRAPED_JOBS_LENGTH)
     metadata: dict[str, Any] | None = None
     posted_date: date | None = None
     scraped_at: datetime | None = None
@@ -45,7 +47,7 @@ class JobUpdate(BaseModel):
     job_type: str | None = Field(default=None, max_length=50)
     description_short: str | None = None
     description_full: str | None = None
-    scraped_jobs: str | None = None
+    scraped_jobs: str | None = Field(default=None, max_length=MAX_SCRAPED_JOBS_LENGTH)
     metadata: dict[str, Any] | None = None
     posted_date: date | None = None
     scraped_at: datetime | None = None

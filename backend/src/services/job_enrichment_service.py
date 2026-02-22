@@ -48,14 +48,14 @@ SECTION_HEADER_KEYWORDS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\babout(?:\s+the\s+job)?\b", re.IGNORECASE), "About"),
     (
         re.compile(
-            r"\b(responsibilities|what\s+you(?:'|’)ll\s+do|duties|role\s+overview)\b",
+            r"\b(responsibilities|what\s+you(?:'|\u2019)ll\s+do|duties|role\s+overview)\b",
             re.IGNORECASE,
         ),
         "Responsibilities",
     ),
     (
         re.compile(
-            r"\b(requirements|qualifications|what\s+you(?:'|’)ll\s+need|skills|experience)\b",
+            r"\b(requirements|qualifications|what\s+you(?:'|\u2019)ll\s+need|skills|experience)\b",
             re.IGNORECASE,
         ),
         "Requirements",

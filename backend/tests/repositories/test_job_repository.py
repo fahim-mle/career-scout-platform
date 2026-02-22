@@ -117,6 +117,19 @@ async def test_create_rejects_protected_fields(db_session: AsyncSession) -> None
 
 
 @pytest.mark.asyncio
+async def test_create_rejects_raw_metadata_field_alias(
+    db_session: AsyncSession,
+) -> None:
+    """Repository create should reject raw DB metadata field name."""
+    repo = JobRepository(db_session)
+    payload = build_job_data(external_id="metadata-alias-create")
+    payload["metadata"] = {"platform": "linkedin"}
+
+    with pytest.raises(ValueError, match="Unknown or unsafe"):
+        await repo.create(payload)
+
+
+@pytest.mark.asyncio
 async def test_create_raises_duplicate_error(
     db_session: AsyncSession,
     job_factory: JobFactory,
@@ -223,6 +236,8 @@ async def test_update_rejects_protected_or_unsafe_fields(
         await repo.update(job.id, {"_hidden": "bad"})
     with pytest.raises(ValueError, match="Unknown or unsafe"):
         await repo.update(job.id, {"not_a_column": "bad"})
+    with pytest.raises(ValueError, match="Unknown or unsafe"):
+        await repo.update(job.id, {"metadata": {"platform": "linkedin"}})
 
 
 @pytest.mark.asyncio

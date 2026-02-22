@@ -20,8 +20,9 @@ async def main() -> int:
       0: No stamp required.
      10: Legacy schema detected (tables exist but alembic_version is missing).
     """
-    engine = create_async_engine(settings.DATABASE_URL, future=True)
+    engine = None
     try:
+        engine = create_async_engine(settings.DATABASE_URL)
         async with engine.connect() as connection:
             version_table = await connection.execute(
                 text("SELECT to_regclass('public.alembic_version')")
@@ -40,13 +41,17 @@ async def main() -> int:
                 ),
                 {"table_names": list(APP_TABLES)},
             )
-            existing_tables = table_count.scalar_one()
-            if isinstance(existing_tables, int) and existing_tables > 0:
+            existing_tables = int(table_count.scalar_one())
+            if existing_tables > 0:
                 return 10
 
             return 0
+    except Exception as exc:
+        print(f"Failed to check migration state: {exc}", file=sys.stderr)
+        return 1
     finally:
-        await engine.dispose()
+        if engine is not None:
+            await engine.dispose()
 
 
 if __name__ == "__main__":

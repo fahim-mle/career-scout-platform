@@ -101,6 +101,24 @@ def test_normalize_text_deduplicates_separator_repeated_title_phrase() -> None:
     assert result == "Software Engineer"
 
 
+def test_normalize_text_deduplicates_single_token_repeated_title_phrase() -> None:
+    """Title normalization should collapse repeated one-token phrases."""
+    raw_title = "Engineer Engineer"
+
+    result = LinkedInScraper._normalize_text(raw_title)
+
+    assert result == "Engineer"
+
+
+def test_normalize_text_deduplicates_single_token_separator_phrase() -> None:
+    """Title normalization should collapse separator-joined one-token phrases."""
+    raw_title = "Engineer - Engineer"
+
+    result = LinkedInScraper._normalize_text(raw_title)
+
+    assert result == "Engineer"
+
+
 def test_normalize_text_keeps_non_duplicate_title_unchanged() -> None:
     """Title normalization should keep distinct titles unchanged."""
     raw_title = "Senior Software Engineer"
@@ -174,6 +192,7 @@ async def test_extract_description_html_with_fallback_uses_preferred_selectors()
         del selectors, extraction_label
         return '<section class="show-more-less-html"><p>Preferred</p></section>'
 
+    # Intentional private-method monkeypatch: isolates fallback orchestration path.
     scraper._extract_html_from_page_selectors = (  # type: ignore[method-assign]
         fake_extract_html_from_page_selectors
     )
@@ -206,6 +225,7 @@ async def test_extract_description_html_with_fallback_uses_fallback_selectors() 
         del base_seconds
         return None
 
+    # Intentional private-method monkeypatch: targets branch ordering deterministically.
     scraper._extract_html_from_page_selectors = (  # type: ignore[method-assign]
         fake_extract_html_from_page_selectors
     )
@@ -217,6 +237,45 @@ async def test_extract_description_html_with_fallback_uses_fallback_selectors() 
     assert raw_html == "<main><p>Fallback block</p></main>"
     assert calls[0][0] == "description_html"
     assert calls[-1][0] == "description_html_fallback"
+
+
+@pytest.mark.asyncio
+async def test_extract_description_html_with_fallback_caps_large_fallback_payload() -> (
+    None
+):
+    """Fallback extraction should cap oversized raw HTML payloads."""
+    scraper = LinkedInScraper()
+    scraper.page = cast(Any, _FakePage(elements={}))
+    oversized_html = "<main>" + (
+        "x" * (scraper.MAX_FALLBACK_DESCRIPTION_HTML_LENGTH + 25)
+    )
+
+    async def fake_extract_html_from_page_selectors(
+        selectors: tuple[str, ...], extraction_label: str
+    ) -> str | None:
+        del selectors
+        if extraction_label == "description_html_fallback":
+            return oversized_html
+        return None
+
+    async def noop() -> None:
+        return None
+
+    async def noop_with_arg(base_seconds: float | None = None) -> None:
+        del base_seconds
+        return None
+
+    # Intentional private-method monkeypatch: validates fallback truncation guard.
+    scraper._extract_html_from_page_selectors = (  # type: ignore[method-assign]
+        fake_extract_html_from_page_selectors
+    )
+    scraper._expand_description_if_available = noop  # type: ignore[method-assign]
+    scraper._rate_limit_with_jitter = noop_with_arg  # type: ignore[method-assign]
+
+    raw_html = await scraper._extract_description_html_with_fallback()
+
+    assert raw_html is not None
+    assert len(raw_html) == scraper.MAX_FALLBACK_DESCRIPTION_HTML_LENGTH
 
 
 @pytest.mark.asyncio

@@ -125,5 +125,47 @@ class JobEnrichment(BaseModel):
             raise ValueError("confidence_by_field must be an object")
         return value
 
+    @validates("description_sections")
+    def validate_description_sections(
+        self,
+        key: str,
+        value: list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]] | None:
+        """Validate description section payload shape.
+
+        Args:
+            key: SQLAlchemy attribute key.
+            value: Description sections payload.
+
+        Returns:
+            The original payload when valid.
+
+        Raises:
+            ValueError: If payload is not a list of {title, items} objects.
+        """
+        if value is None:
+            return value
+        if not isinstance(value, list):
+            raise ValueError("description_sections must be a list")
+
+        for section in value:
+            if not isinstance(section, dict):
+                raise ValueError("description_sections entries must be objects")
+
+            title = section.get("title")
+            items = section.get("items")
+            if not isinstance(title, str) or not title.strip():
+                raise ValueError(
+                    "description_sections.title must be a non-empty string"
+                )
+            if not isinstance(items, list) or any(
+                not isinstance(item, str) or not item.strip() for item in items
+            ):
+                raise ValueError(
+                    "description_sections.items must be a list of non-empty strings"
+                )
+
+        return value
+
 
 __all__ = ["JobEnrichment"]

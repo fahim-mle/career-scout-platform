@@ -188,7 +188,9 @@ def _build_job_update_payload(
         existing_title=existing_title,
         incoming_title=incoming_title,
     ):
-        updates["title"] = incoming_title
+        normalized_incoming_title = normalize_job_title(incoming_title)
+        if normalized_incoming_title is not None:
+            updates["title"] = normalized_incoming_title
 
     return updates
 
@@ -212,6 +214,14 @@ def _normalize_scraped_payload(scraped_payload: dict[str, Any]) -> dict[str, Any
             mapped_field="metadata->platform_metadata",
             has_metadata=bool(metadata_payload),
         ).debug("Mapped scraper metadata payload for repository compatibility")
+    elif metadata_payload is not None:
+        logger.bind(
+            operation="normalize_scraped_payload",
+            discarded_field="metadata",
+            preserved_field="platform_metadata",
+        ).debug(
+            "Discarded incoming metadata payload because platform_metadata already exists"
+        )
 
     return normalized_payload
 
