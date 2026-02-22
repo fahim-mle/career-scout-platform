@@ -179,7 +179,7 @@ def _build_job_update_payload(
     for field in enrichable_fields:
         current_value = getattr(existing_job, field, None)
         new_value = scraped_payload.get(field)
-        if current_value is None and new_value is not None:
+        if current_value is None and _has_meaningful_value(new_value):
             updates[field] = new_value
 
     existing_title = getattr(existing_job, "title", None)
@@ -207,8 +207,34 @@ def _normalize_scraped_payload(scraped_payload: dict[str, Any]) -> dict[str, Any
 
     if metadata_payload is not None and "platform_metadata" not in normalized_payload:
         normalized_payload["platform_metadata"] = metadata_payload
+        logger.bind(
+            operation="normalize_scraped_payload",
+            mapped_field="metadata->platform_metadata",
+            has_metadata=bool(metadata_payload),
+        ).debug("Mapped scraper metadata payload for repository compatibility")
 
     return normalized_payload
+
+
+def _has_meaningful_value(value: Any) -> bool:
+    """Return whether scraped value should be persisted for enrichment update.
+
+    Args:
+        value: Candidate scraped value.
+
+    Returns:
+        ``True`` when value is non-empty and meaningful.
+    """
+    if value is None:
+        return False
+
+    if isinstance(value, str):
+        return bool(value.strip())
+
+    if isinstance(value, (list, dict, tuple, set)):
+        return len(value) > 0
+
+    return True
 
 
 def _should_update_title_from_duplicate_artifact(

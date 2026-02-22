@@ -448,6 +448,138 @@ def test_normalize_scraped_payload_maps_metadata_to_platform_metadata() -> None:
     assert normalized["scraped_jobs"] == '<div id="job-details">Role details</div>'
 
 
+def test_normalize_scraped_payload_preserves_existing_platform_metadata() -> None:
+    """Normalizer should not overwrite explicit platform_metadata values."""
+
+    normalized = scraper_tasks._normalize_scraped_payload(
+        {
+            "external_id": "123",
+            "metadata": {"platform": "linkedin", "location": "Remote"},
+            "platform_metadata": {"platform": "linkedin", "location": "Sydney"},
+        }
+    )
+
+    assert "metadata" not in normalized
+    assert normalized["platform_metadata"] == {
+        "platform": "linkedin",
+        "location": "Sydney",
+    }
+
+
+def test_build_job_update_payload_ignores_empty_new_metadata_values() -> None:
+    """Update helper should skip empty enrichment values to avoid noisy writes."""
+
+    existing = SimpleNamespace(
+        description_full=None,
+        description_short=None,
+        job_type=None,
+        scraped_jobs=None,
+        platform_metadata=None,
+    )
+    scraped = {
+        "scraped_jobs": "   ",
+        "platform_metadata": {},
+        "description_full": "",
+    }
+
+    result = scraper_tasks._build_job_update_payload(existing, scraped)
+
+    assert result == {}
+
+
+def test_run_linkedin_scrape_and_persist_maps_metadata_and_persists_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Orchestration should map metadata and persist new raw fields on create."""
+
+    class DummyAsyncSession:
+        pass
+
+    class DummySessionContext:
+        async def __aenter__(self) -> DummyAsyncSession:
+            return DummyAsyncSession()
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            del exc_type, exc, tb
+
+    class FakeLinkedInScraper:
+        def __init__(self, headless: bool, rate_limit_seconds: float) -> None:
+            self.headless = headless
+            self.rate_limit_seconds = rate_limit_seconds
+
+        async def __aenter__(self) -> "FakeLinkedInScraper":
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            del exc_type, exc, tb
+
+        async def scrape_jobs(
+            self,
+            query: str,
+            location: str,
+            limit: int,
+        ) -> list[dict[str, Any]]:
+            del query, location, limit
+            return [
+                {
+                    "external_id": "new-raw-1",
+                    "platform": "linkedin",
+                    "url": "https://linkedin.com/jobs/new-raw-1",
+                    "title": "Backend Engineer",
+                    "company": "Career Scout",
+                    "location": "Remote",
+                    "description_full": "Full description",
+                    "description_short": "Short description",
+                    "scraped_jobs": '<div id="job-details"><p>Role</p></div>',
+                    "metadata": {"platform": "linkedin", "date_posted": "1 day ago"},
+                }
+            ]
+
+    captured_payloads: list[dict[str, Any]] = []
+
+    class FakeJobRepository:
+        def __init__(self, db_session: DummyAsyncSession) -> None:
+            self.db_session = db_session
+
+        async def get_by_external_id(self, external_id: str, platform: str) -> Any:
+            del external_id, platform
+            return None
+
+        async def create(self, payload: dict[str, Any]) -> Any:
+            captured_payloads.append(payload)
+            return SimpleNamespace(id=99)
+
+        async def update(self, job_id: int, payload: dict[str, Any]) -> Any:
+            del job_id, payload
+            raise AssertionError("update should not be called in create path")
+
+    monkeypatch.setattr(scraper_tasks, "LinkedInScraper", FakeLinkedInScraper)
+    monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
+    monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
+
+    result = asyncio.run(
+        scraper_tasks._run_linkedin_scrape_and_persist(
+            query="python",
+            location="remote",
+            limit=3,
+            task_id="task-79",
+        )
+    )
+
+    assert result["created"] == 1
+    assert result["updated"] == 0
+    assert captured_payloads
+    assert (
+        captured_payloads[0]["scraped_jobs"]
+        == '<div id="job-details"><p>Role</p></div>'
+    )
+    assert captured_payloads[0]["platform_metadata"] == {
+        "platform": "linkedin",
+        "date_posted": "1 day ago",
+    }
+    assert "metadata" not in captured_payloads[0]
+
+
 def test_build_job_update_payload_updates_title_when_duplicate_artifact_corrected() -> (
     None
 ):
