@@ -143,6 +143,52 @@ class TestJobsAPI:
         assert body["metadata"] == payload["metadata"]
 
     @pytest.mark.asyncio
+    async def test_jobs_endpoints_keep_existing_fields_with_metadata_payload(
+        self, client: AsyncClient
+    ) -> None:
+        """Metadata additions should not remove existing response contract fields."""
+        payload = build_job_payload("api-contract-meta-1")
+        payload["description_short"] = "Short summary"
+        payload["description_full"] = "Long description"
+        payload["scraped_jobs"] = "<main><p>raw html</p></main>"
+        payload["metadata"] = {
+            "platform": "linkedin",
+            "location": "Brisbane",
+            "date_posted": "1 day ago",
+        }
+
+        create_response = await client.post("/api/v1/jobs", json=payload)
+
+        assert create_response.status_code == 201
+        created = create_response.json()
+        job_id = created["id"]
+        for legacy_field in (
+            "external_id",
+            "platform",
+            "url",
+            "title",
+            "company",
+            "location",
+            "description_short",
+            "description_full",
+            "is_active",
+        ):
+            assert legacy_field in created
+
+        enriched_response = await client.get(f"/api/v1/jobs/{job_id}")
+        raw_response = await client.get(f"/api/v1/scraped_raw_jobs/{job_id}")
+
+        assert enriched_response.status_code == 200
+        assert raw_response.status_code == 200
+        enriched_body = enriched_response.json()
+        raw_body = raw_response.json()
+        assert_enriched_job_shape(enriched_body)
+        assert raw_body["external_id"] == payload["external_id"]
+        assert raw_body["description_short"] == "Short summary"
+        assert raw_body["description_full"] == "Long description"
+        assert raw_body["metadata"] == payload["metadata"]
+
+    @pytest.mark.asyncio
     async def test_list_jobs_with_data(self, client: AsyncClient) -> None:
         await client.post("/api/v1/jobs", json=build_job_payload("api-list-1"))
         await client.post("/api/v1/jobs", json=build_job_payload("api-list-2"))

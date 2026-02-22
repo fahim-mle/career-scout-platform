@@ -289,6 +289,32 @@ async def test_create_job_accepts_optional_platform_metadata() -> None:
 
 
 @pytest.mark.asyncio
+async def test_update_job_accepts_raw_html_and_generic_metadata_alias() -> None:
+    """Update flow should persist raw HTML and metadata alias mapping."""
+    repo = FakeJobRepository(jobs={1: make_job(id=1)})
+    service = make_service(repo)
+
+    result = await service.update_job(
+        1,
+        JobUpdate(
+            scraped_jobs="<section><p>raw detail html</p></section>",
+            metadata={
+                "platform": "linkedin",
+                "location": "Remote",
+                "date_posted": "1 day ago",
+            },
+        ),
+    )
+
+    assert result.scraped_jobs == "<section><p>raw detail html</p></section>"
+    assert result.metadata == {
+        "platform": "linkedin",
+        "location": "Remote",
+        "date_posted": "1 day ago",
+    }
+
+
+@pytest.mark.asyncio
 async def test_create_job_normalizes_adjacent_duplicate_title_phrase() -> None:
     """Service should normalize duplicate adjacent title phrases before create."""
     repo = FakeJobRepository()

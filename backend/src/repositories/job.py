@@ -188,7 +188,10 @@ class JobRepository(BaseRepository[Job]):
         for field, value in job_data.items():
             if field in PROTECTED_UPDATE_FIELDS:
                 raise ValueError(f"Cannot update protected field: {field}")
-            if field.startswith("_") or field not in self._column_names:
+            is_alias_field = field == "platform_metadata"
+            if field.startswith("_") or (
+                field not in self._column_names and not is_alias_field
+            ):
                 raise ValueError(f"Unknown or unsafe update field: {field}")
             setattr(job, field, value)
 

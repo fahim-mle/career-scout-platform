@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from typing import Any, cast
 
 from src.scrapers.linkedin import LinkedInScraper
 
@@ -122,14 +123,17 @@ def test_normalize_text_keeps_legitimate_composite_title_unchanged() -> None:
 async def test_extract_html_from_page_selectors_returns_raw_html_when_present() -> None:
     """Raw HTML extraction should return the first matching selector block."""
     scraper = LinkedInScraper()
-    scraper.page = _FakePage(
-        {
-            "#job-details": _FakeElement(
-                outer_html=(
-                    '<div id="job-details"><p>About the job</p><p>Build APIs.</p></div>'
+    scraper.page = cast(
+        Any,
+        _FakePage(
+            {
+                "#job-details": _FakeElement(
+                    outer_html=(
+                        '<div id="job-details"><p>About the job</p><p>Build APIs.</p></div>'
+                    )
                 )
-            )
-        }
+            }
+        ),
     )
 
     raw_html = await scraper._extract_html_from_page_selectors(
@@ -146,7 +150,7 @@ async def test_extract_html_from_page_selectors_returns_raw_html_when_present() 
 async def test_extract_html_from_page_selectors_returns_none_when_missing() -> None:
     """Raw HTML extraction should be resilient when no selector exists."""
     scraper = LinkedInScraper()
-    scraper.page = _FakePage(elements={})
+    scraper.page = cast(Any, _FakePage(elements={}))
 
     raw_html = await scraper._extract_html_from_page_selectors(
         selectors=("#job-details", ".jobs-box__html-content"),
@@ -154,6 +158,110 @@ async def test_extract_html_from_page_selectors_returns_none_when_missing() -> N
     )
 
     assert raw_html is None
+
+
+@pytest.mark.asyncio
+async def test_extract_description_html_with_fallback_uses_preferred_selectors() -> (
+    None
+):
+    """Description HTML helper should return preferred selector payload first."""
+    scraper = LinkedInScraper()
+    scraper.page = cast(Any, _FakePage(elements={}))
+
+    async def fake_extract_html_from_page_selectors(
+        selectors: tuple[str, ...], extraction_label: str
+    ) -> str | None:
+        del selectors, extraction_label
+        return '<section class="show-more-less-html"><p>Preferred</p></section>'
+
+    scraper._extract_html_from_page_selectors = (  # type: ignore[method-assign]
+        fake_extract_html_from_page_selectors
+    )
+
+    raw_html = await scraper._extract_description_html_with_fallback()
+
+    assert raw_html is not None
+    assert "Preferred" in raw_html
+
+
+@pytest.mark.asyncio
+async def test_extract_description_html_with_fallback_uses_fallback_selectors() -> None:
+    """Description HTML helper should fall back when preferred selectors miss."""
+    scraper = LinkedInScraper()
+    scraper.page = cast(Any, _FakePage(elements={}))
+    calls: list[tuple[str, tuple[str, ...]]] = []
+
+    async def fake_extract_html_from_page_selectors(
+        selectors: tuple[str, ...], extraction_label: str
+    ) -> str | None:
+        calls.append((extraction_label, selectors))
+        if extraction_label == "description_html_fallback":
+            return "<main><p>Fallback block</p></main>"
+        return None
+
+    async def noop() -> None:
+        return None
+
+    async def noop_with_arg(base_seconds: float | None = None) -> None:
+        del base_seconds
+        return None
+
+    scraper._extract_html_from_page_selectors = (  # type: ignore[method-assign]
+        fake_extract_html_from_page_selectors
+    )
+    scraper._expand_description_if_available = noop  # type: ignore[method-assign]
+    scraper._rate_limit_with_jitter = noop_with_arg  # type: ignore[method-assign]
+
+    raw_html = await scraper._extract_description_html_with_fallback()
+
+    assert raw_html == "<main><p>Fallback block</p></main>"
+    assert calls[0][0] == "description_html"
+    assert calls[-1][0] == "description_html_fallback"
+
+
+@pytest.mark.asyncio
+async def test_extract_top_card_metadata_extracts_expected_fields() -> None:
+    """Top-card extraction should populate metadata from primary selector text."""
+    scraper = LinkedInScraper()
+    scraper.page = cast(
+        Any,
+        _FakePage(
+            elements={
+                scraper.TOP_CARD_METADATA_SELECTORS[0]: _FakeElement(
+                    text=(
+                        "Sydney, New South Wales, Australia · 1 day ago · "
+                        "Over 100 applicants · Promoted by hirer"
+                    )
+                )
+            }
+        ),
+    )
+
+    metadata = await scraper._extract_top_card_metadata()
+
+    assert metadata["platform"] == "linkedin"
+    assert metadata["location"] == "Sydney, New South Wales, Australia"
+    assert metadata["date_posted"] == "1 day ago"
+    assert metadata["number_of_applicants"] == "Over 100 applicants"
+    assert metadata["promoted_by_hirer"] is True
+
+
+@pytest.mark.asyncio
+async def test_extract_top_card_metadata_returns_defaults_when_missing() -> None:
+    """Top-card extraction should return default metadata when block is absent."""
+    scraper = LinkedInScraper()
+    scraper.page = cast(Any, _FakePage(elements={}))
+
+    metadata = await scraper._extract_top_card_metadata()
+
+    assert metadata == {
+        "platform": "linkedin",
+        "location": None,
+        "date_posted": None,
+        "number_of_applicants": None,
+        "promoted_by_hirer": False,
+        "actively_reviewing_applicants": False,
+    }
 
 
 def test_parse_top_card_metadata_text_maps_all_expected_fields() -> None:

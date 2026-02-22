@@ -171,6 +171,36 @@ async def test_update_modifies_allowed_fields(
 
 
 @pytest.mark.asyncio
+async def test_update_persists_raw_html_and_metadata_fields(
+    db_session: AsyncSession,
+    job_factory: JobFactory,
+) -> None:
+    """Repository update should persist raw scraped payload fields."""
+    job = await job_factory.create()
+    repo = JobRepository(db_session)
+
+    updated = await repo.update(
+        job.id,
+        {
+            "scraped_jobs": "<main><p>About the job</p></main>",
+            "platform_metadata": {
+                "platform": "linkedin",
+                "location": "Sydney",
+                "date_posted": "1 day ago",
+            },
+        },
+    )
+
+    assert updated is not None
+    assert updated.scraped_jobs == "<main><p>About the job</p></main>"
+    assert updated.platform_metadata == {
+        "platform": "linkedin",
+        "location": "Sydney",
+        "date_posted": "1 day ago",
+    }
+
+
+@pytest.mark.asyncio
 async def test_update_returns_none_when_missing(db_session: AsyncSession) -> None:
     repo = JobRepository(db_session)
 
