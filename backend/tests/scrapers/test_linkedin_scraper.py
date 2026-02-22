@@ -60,6 +60,15 @@ def test_normalize_text_deduplicates_adjacent_repeated_title_phrase() -> None:
     assert result == "Software Engineer"
 
 
+def test_normalize_text_deduplicates_separator_repeated_title_phrase() -> None:
+    """Title normalization should collapse separator-joined repeated phrases."""
+    raw_title = "Software Engineer - Software Engineer"
+
+    result = LinkedInScraper._normalize_text(raw_title)
+
+    assert result == "Software Engineer"
+
+
 def test_normalize_text_keeps_non_duplicate_title_unchanged() -> None:
     """Title normalization should keep distinct titles unchanged."""
     raw_title = "Senior Software Engineer"
@@ -67,3 +76,12 @@ def test_normalize_text_keeps_non_duplicate_title_unchanged() -> None:
     result = LinkedInScraper._normalize_text(raw_title)
 
     assert result == "Senior Software Engineer"
+
+
+def test_normalize_text_keeps_legitimate_composite_title_unchanged() -> None:
+    """Normalization should keep legitimate composite titles intact."""
+    raw_title = "Sales and Marketing Manager"
+
+    result = LinkedInScraper._normalize_text(raw_title)
+
+    assert result == "Sales and Marketing Manager"

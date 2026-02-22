@@ -426,6 +426,24 @@ def test_build_job_update_payload_updates_title_when_duplicate_artifact_correcte
     assert result == {"title": "Software Engineer"}
 
 
+def test_build_job_update_payload_updates_separator_joined_duplicate_title() -> None:
+    """Helper should correct separator-joined duplicate title artifacts."""
+
+    existing = SimpleNamespace(
+        title="Software Engineer - Software Engineer",
+        description_full="full",
+        description_short="short",
+        job_type="Contract",
+    )
+    scraped = {
+        "title": "Software Engineer",
+    }
+
+    result = scraper_tasks._build_job_update_payload(existing, scraped)
+
+    assert result == {"title": "Software Engineer"}
+
+
 def test_build_job_update_payload_does_not_update_distinct_existing_title() -> None:
     """Distinct titles must not be overwritten by incoming values."""
 
@@ -437,6 +455,26 @@ def test_build_job_update_payload_does_not_update_distinct_existing_title() -> N
     )
     scraped = {
         "title": "Software Engineer",
+    }
+
+    result = scraper_tasks._build_job_update_payload(existing, scraped)
+
+    assert result == {}
+
+
+def test_build_job_update_payload_does_not_update_legitimate_repeated_word_title() -> (
+    None
+):
+    """Helper should not treat non-adjacent phrase titles as duplicate artifacts."""
+
+    existing = SimpleNamespace(
+        title="Head of People and Culture",
+        description_full="full",
+        description_short="short",
+        job_type="Contract",
+    )
+    scraped = {
+        "title": "People and Culture Head",
     }
 
     result = scraper_tasks._build_job_update_payload(existing, scraped)

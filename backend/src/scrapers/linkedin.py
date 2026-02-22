@@ -12,6 +12,11 @@ from loguru import logger
 from playwright.async_api import ElementHandle, TimeoutError as PlaywrightTimeoutError
 
 from src.core.config import settings
+from src.core.title_normalization import (
+    normalize_job_title,
+    normalize_title_whitespace,
+    title_preview_for_log,
+)
 from src.scrapers.base import BaseScraper
 
 
@@ -394,9 +399,19 @@ class LinkedInScraper(BaseScraper):
             )
             return None
 
-        title = await self._extract_first_text(card, self.TITLE_SELECTORS)
+        raw_title = await self._extract_first_raw_text(card, self.TITLE_SELECTORS)
+        title = normalize_job_title(raw_title)
         company = await self._extract_first_text(card, self.COMPANY_SELECTORS)
         location = await self._extract_first_text(card, self.LOCATION_SELECTORS)
+
+        if raw_title and title and raw_title != title:
+            logger.bind(
+                scraper=self.__class__.__name__,
+                normalization="adjacent_duplicate_phrase",
+                changed=True,
+                title_raw=title_preview_for_log(raw_title),
+                title_normalized=title_preview_for_log(title),
+            ).info("Normalized LinkedIn title artifact")
 
         if not title or not company or not location:
             return None
@@ -688,6 +703,22 @@ class LinkedInScraper(BaseScraper):
         value = await element.inner_text()
         return self._normalize_text(value)
 
+    async def _extract_raw_text(self, card: ElementHandle, selector: str) -> str | None:
+        """Extract unnormalized text for a selector within a card.
+
+        Args:
+            card: Card element handle.
+            selector: CSS selector to query inside card.
+
+        Returns:
+            Raw text when present, otherwise ``None``.
+        """
+        element = await card.query_selector(selector)
+        if element is None:
+            return None
+
+        return await element.inner_text()
+
     async def _extract_first_text(
         self,
         card: ElementHandle,
@@ -706,6 +737,28 @@ class LinkedInScraper(BaseScraper):
             value = await self._extract_text(card, selector)
             if value:
                 return value
+
+        return None
+
+    async def _extract_first_raw_text(
+        self,
+        card: ElementHandle,
+        selectors: tuple[str, ...],
+    ) -> str | None:
+        """Extract first non-empty raw text from selector fallbacks.
+
+        Args:
+            card: Card element handle.
+            selectors: Ordered CSS selector fallbacks.
+
+        Returns:
+            Raw text when available, otherwise ``None``.
+        """
+        for selector in selectors:
+            value = await self._extract_raw_text(card, selector)
+            normalized = normalize_title_whitespace(value)
+            if normalized:
+                return normalized
 
         return None
 
@@ -740,11 +793,7 @@ class LinkedInScraper(BaseScraper):
         Returns:
             Normalized string or ``None`` when the value is empty.
         """
-        normalized = " ".join(value.split())
-        if not normalized:
-            return None
-
-        return LinkedInScraper._collapse_adjacent_duplicate_phrase(normalized)
+        return normalize_job_title(value)
 
     @staticmethod
     def _collapse_adjacent_duplicate_phrase(value: str) -> str:
@@ -761,19 +810,7 @@ class LinkedInScraper(BaseScraper):
             Deduplicated phrase when an exact adjacent duplicate artifact is
             detected, otherwise the original value.
         """
-        try:
-            tokens = value.split(" ")
-            token_count = len(tokens)
-            if token_count < 2 or token_count % 2 != 0:
-                return value
-
-            midpoint = token_count // 2
-            if tokens[:midpoint] == tokens[midpoint:]:
-                return " ".join(tokens[:midpoint])
-
-            return value
-        except Exception:
-            return value
+        return normalize_job_title(value) or value
 
     async def _assert_no_challenge(self, stage: str) -> None:
         """Raise when LinkedIn challenge/captcha cues are detected.

@@ -26,6 +26,7 @@ from src.core.metrics import (
     observe_scraper_duration,
     set_jobs_in_database,
 )
+from src.core.title_normalization import normalize_job_title, title_preview_for_log
 from src.celery_app import celery_app
 from src.db.session import get_session
 from src.repositories.job import JobRepository
@@ -211,13 +212,20 @@ def _should_update_title_from_duplicate_artifact(
     if compact_existing == compact_incoming:
         return False
 
-    collapsed_existing = LinkedInScraper._collapse_adjacent_duplicate_phrase(
-        compact_existing
-    )
-    return (
+    collapsed_existing = normalize_job_title(compact_existing)
+    should_update = (
         collapsed_existing != compact_existing
         and collapsed_existing == compact_incoming
     )
+    if should_update:
+        logger.bind(
+            operation="duplicate_title_correction",
+            changed=True,
+            title_raw=title_preview_for_log(compact_existing),
+            title_normalized=title_preview_for_log(compact_incoming),
+        ).info("Correcting persisted duplicate title artifact")
+
+    return should_update
 
 
 async def _run_linkedin_scrape_and_persist(

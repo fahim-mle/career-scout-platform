@@ -255,6 +255,26 @@ async def test_create_job_success_returns_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_job_normalizes_adjacent_duplicate_title_phrase() -> None:
+    """Service should normalize duplicate adjacent title phrases before create."""
+    repo = FakeJobRepository()
+    service = make_service(repo)
+    payload = JobCreate(
+        external_id="new-2",
+        platform="linkedin",
+        url="https://linkedin.com/jobs/new-2",
+        title="Software Engineer Software Engineer",
+        company="Acme",
+        location="Brisbane",
+    )
+
+    result = await service.create_job(payload)
+
+    assert result.title == "Software Engineer"
+    assert repo.jobs[result.id].title == "Software Engineer"
+
+
+@pytest.mark.asyncio
 async def test_create_job_rejects_url_domain_mismatch() -> None:
     service = make_service(FakeJobRepository())
     payload = JobCreate(
@@ -321,6 +341,36 @@ async def test_update_job_allows_longer_description() -> None:
 
     assert result.description_full is not None
     assert result.description_full.startswith("this is now")
+
+
+@pytest.mark.asyncio
+async def test_update_job_normalizes_adjacent_duplicate_title_phrase() -> None:
+    """Service should normalize duplicate adjacent title phrases on update."""
+    repo = FakeJobRepository(jobs={1: make_job(id=1, title="Backend Engineer")})
+    service = make_service(repo)
+
+    result = await service.update_job(
+        1,
+        JobUpdate(title="Software Engineer - Software Engineer"),
+    )
+
+    assert result.title == "Software Engineer"
+    assert repo.jobs[1].title == "Software Engineer"
+
+
+@pytest.mark.asyncio
+async def test_update_job_keeps_legitimate_title_unchanged() -> None:
+    """Service should not alter legitimate non-duplicate title updates."""
+    repo = FakeJobRepository(jobs={1: make_job(id=1, title="Backend Engineer")})
+    service = make_service(repo)
+
+    result = await service.update_job(
+        1,
+        JobUpdate(title="Senior Software Engineer"),
+    )
+
+    assert result.title == "Senior Software Engineer"
+    assert repo.jobs[1].title == "Senior Software Engineer"
 
 
 @pytest.mark.asyncio
