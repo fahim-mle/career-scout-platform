@@ -54,17 +54,18 @@ class DummySessionContext:
         del exc_type, exc, tb
 
 
-def make_linkedin_scraper_double(
+def make_scraper_double(
     scraped_jobs: list[dict[str, Any]],
+    class_name: str,
 ) -> type:
-    """Build a lightweight LinkedIn scraper double for a fixed payload."""
+    """Build a lightweight scraper double for a fixed payload."""
 
-    class FakeLinkedInScraper:
+    class FakeScraper:
         def __init__(self, headless: bool, rate_limit_seconds: float) -> None:
             self.headless = headless
             self.rate_limit_seconds = rate_limit_seconds
 
-        async def __aenter__(self) -> "FakeLinkedInScraper":
+        async def __aenter__(self) -> "FakeScraper":
             return self
 
         async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
@@ -79,35 +80,8 @@ def make_linkedin_scraper_double(
             del query, location, limit
             return scraped_jobs
 
-    return FakeLinkedInScraper
-
-
-def make_seek_scraper_double(
-    scraped_jobs: list[dict[str, Any]],
-) -> type:
-    """Build a lightweight Seek scraper double for a fixed payload."""
-
-    class FakeSeekScraper:
-        def __init__(self, headless: bool, rate_limit_seconds: float) -> None:
-            self.headless = headless
-            self.rate_limit_seconds = rate_limit_seconds
-
-        async def __aenter__(self) -> "FakeSeekScraper":
-            return self
-
-        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-            del exc_type, exc, tb
-
-        async def scrape_jobs(
-            self,
-            query: str,
-            location: str,
-            limit: int,
-        ) -> list[dict[str, Any]]:
-            del query, location, limit
-            return scraped_jobs
-
-    return FakeSeekScraper
+    FakeScraper.__name__ = class_name
+    return FakeScraper
 
 
 SCRAPE_TASK_RUN = scraper_tasks.scrape_linkedin_jobs.run.__func__  # type: ignore[attr-defined]
@@ -626,7 +600,7 @@ def test_run_linkedin_scrape_and_persist_maps_metadata_and_persists_fields(
     monkeypatch.setattr(
         scraper_tasks,
         "LinkedInScraper",
-        make_linkedin_scraper_double(fake_scraped_jobs),
+        make_scraper_double(fake_scraped_jobs, class_name="FakeLinkedInScraper"),
     )
     monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
     monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
@@ -694,7 +668,7 @@ def test_run_seek_scrape_and_persist_maps_metadata_and_persists_fields(
     monkeypatch.setattr(
         scraper_tasks,
         "SeekScraper",
-        make_seek_scraper_double(fake_scraped_jobs),
+        make_scraper_double(fake_scraped_jobs, class_name="FakeSeekScraper"),
     )
     monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
     monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
@@ -764,7 +738,7 @@ def test_run_seek_scrape_and_persist_updates_empty_fields_with_meaningful_values
     monkeypatch.setattr(
         scraper_tasks,
         "SeekScraper",
-        make_seek_scraper_double(fake_scraped_jobs),
+        make_scraper_double(fake_scraped_jobs, class_name="FakeSeekScraper"),
     )
     monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
     monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
@@ -833,7 +807,7 @@ def test_run_seek_scrape_and_persist_skips_empty_values_for_non_empty_existing_f
     monkeypatch.setattr(
         scraper_tasks,
         "SeekScraper",
-        make_seek_scraper_double(fake_scraped_jobs),
+        make_scraper_double(fake_scraped_jobs, class_name="FakeSeekScraper"),
     )
     monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
     monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
@@ -900,7 +874,7 @@ def test_run_seek_scrape_and_persist_does_not_overwrite_existing_enriched_fields
     monkeypatch.setattr(
         scraper_tasks,
         "SeekScraper",
-        make_seek_scraper_double(fake_scraped_jobs),
+        make_scraper_double(fake_scraped_jobs, class_name="FakeSeekScraper"),
     )
     monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
     monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
@@ -1511,7 +1485,7 @@ def test_run_linkedin_scrape_and_persist_does_not_count_none_updates(
     monkeypatch.setattr(
         scraper_tasks,
         "LinkedInScraper",
-        make_linkedin_scraper_double(fake_scraped_jobs),
+        make_scraper_double(fake_scraped_jobs, class_name="FakeLinkedInScraper"),
     )
     monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
     monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
@@ -1567,7 +1541,7 @@ def test_run_linkedin_scrape_and_persist_counts_real_updates(
     monkeypatch.setattr(
         scraper_tasks,
         "LinkedInScraper",
-        make_linkedin_scraper_double(fake_scraped_jobs),
+        make_scraper_double(fake_scraped_jobs, class_name="FakeLinkedInScraper"),
     )
     monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
     monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
