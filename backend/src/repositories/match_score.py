@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -412,6 +412,8 @@ class MatchScoreRepository(BaseRepository[MatchScore]):
         limit: int = 100,
         platform: str | None = None,
         is_active: bool = True,
+        job_type: str | None = None,
+        search: str | None = None,
     ) -> list[tuple[Job, int]]:
         """Fetch jobs joined with profile scores ordered by relevance.
 
@@ -421,6 +423,8 @@ class MatchScoreRepository(BaseRepository[MatchScore]):
             limit: Maximum rows to return (max 1000).
             platform: Optional platform filter.
             is_active: Active status filter on jobs.
+            job_type: Optional job-type filter (case-insensitive match).
+            search: Optional keyword search across title, company, and location.
 
         Returns:
             List of ``(Job, relevance_score)`` tuples sorted by relevance.
@@ -444,6 +448,8 @@ class MatchScoreRepository(BaseRepository[MatchScore]):
             limit=limit,
             platform=platform,
             is_active=is_active,
+            job_type=job_type,
+            search=search,
         )
         log.debug("Fetching jobs ordered by relevance score")
 
@@ -458,6 +464,22 @@ class MatchScoreRepository(BaseRepository[MatchScore]):
             )
             if platform is not None:
                 query = query.where(Job.platform == platform)
+
+            normalized_job_type = self._normalize_text_filter(job_type)
+            if normalized_job_type is not None:
+                term = self._contains_pattern(normalized_job_type)
+                query = query.where(Job.job_type.ilike(term, escape="\\"))
+
+            normalized_search = self._normalize_text_filter(search)
+            if normalized_search is not None:
+                term = self._contains_pattern(normalized_search)
+                query = query.where(
+                    or_(
+                        Job.title.ilike(term, escape="\\"),
+                        Job.company.ilike(term, escape="\\"),
+                        Job.location.ilike(term, escape="\\"),
+                    )
+                )
 
             with db_query_timer(query_type="match_score_get_jobs_by_score"):
                 result = await self.db.execute(
@@ -474,6 +496,35 @@ class MatchScoreRepository(BaseRepository[MatchScore]):
         except SQLAlchemyError as exc:
             log.bind(error=str(exc)).error("Failed to fetch jobs by relevance score")
             raise RepositoryError("Failed to fetch jobs by relevance score.") from exc
+
+    @staticmethod
+    def _normalize_text_filter(value: str | None) -> str | None:
+        """Normalize optional text filter by trimming whitespace.
+
+        Args:
+            value: Optional text filter from service layer.
+
+        Returns:
+            Trimmed string when non-empty, otherwise ``None``.
+        """
+        if value is None:
+            return None
+
+        normalized = value.strip()
+        return normalized or None
+
+    @staticmethod
+    def _contains_pattern(value: str) -> str:
+        """Build escaped SQL ILIKE contains pattern.
+
+        Args:
+            value: User-provided filter value.
+
+        Returns:
+            SQL pattern that performs case-insensitive contains matching.
+        """
+        escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return f"%{escaped}%"
 
     async def count_by_category(self, profile_id: int) -> dict[str, int]:
         """Count profile match scores grouped by category.

@@ -148,6 +148,8 @@ class JobService:
         limit: int = 100,
         platform: str | None = None,
         is_active: bool = True,
+        job_type: str | None = None,
+        search: str | None = None,
     ) -> list[RawJobResponse]:
         """List raw jobs for backward-compatible service callers.
 
@@ -156,6 +158,8 @@ class JobService:
             limit: Maximum number of records to return.
             platform: Optional platform filter.
             is_active: Optional active state filter.
+            job_type: Optional job-type filter.
+            search: Optional keyword search across title, company, location.
 
         Returns:
             List of serialized raw job responses.
@@ -168,6 +172,8 @@ class JobService:
             limit=limit,
             platform=platform,
             is_active=is_active,
+            job_type=job_type,
+            search=search,
         )
 
     async def list_raw_jobs(
@@ -176,6 +182,8 @@ class JobService:
         limit: int = 100,
         platform: str | None = None,
         is_active: bool = True,
+        job_type: str | None = None,
+        search: str | None = None,
     ) -> list[RawJobResponse]:
         """List jobs with pagination and optional filters.
 
@@ -184,6 +192,8 @@ class JobService:
             limit: Maximum number of records to return.
             platform: Optional platform filter.
             is_active: Optional active state filter.
+            job_type: Optional job-type filter.
+            search: Optional keyword search across title, company, location.
 
         Returns:
             List of serialized raw job responses.
@@ -198,6 +208,8 @@ class JobService:
             limit=limit,
             platform=platform,
             is_active=is_active,
+            job_type=job_type,
+            search=search,
         )
         log.info("Listing jobs")
 
@@ -208,12 +220,17 @@ class JobService:
                 f"Invalid platform '{platform}'. Allowed values: {allowed}."
             )
 
+        normalized_job_type = self._normalize_optional_filter(job_type)
+        normalized_search = self._normalize_optional_filter(search)
+
         try:
             jobs = await self.repo.get_all(
                 skip=skip,
                 limit=limit,
                 platform=platform,
                 is_active=is_active,
+                job_type=normalized_job_type,
+                search=normalized_search,
             )
         except (RepositoryError, ValueError) as exc:
             log.bind(error=str(exc)).error("Failed to list jobs")
@@ -228,6 +245,8 @@ class JobService:
         limit: int = 100,
         platform: str | None = None,
         is_active: bool = True,
+        job_type: str | None = None,
+        search: str | None = None,
     ) -> list[EnrichedJobResponse]:
         """List jobs enriched with latest processed fields and metadata.
 
@@ -236,6 +255,8 @@ class JobService:
             limit: Maximum number of records to return.
             platform: Optional platform filter.
             is_active: Optional active state filter.
+            job_type: Optional job-type filter.
+            search: Optional keyword search across title, company, location.
 
         Returns:
             List of serialized enriched job responses.
@@ -250,6 +271,8 @@ class JobService:
             limit=limit,
             platform=platform,
             is_active=is_active,
+            job_type=job_type,
+            search=search,
         )
         log.info("Listing enriched jobs")
 
@@ -258,6 +281,8 @@ class JobService:
             limit=limit,
             platform=platform,
             is_active=is_active,
+            job_type=job_type,
+            search=search,
         )
 
         if not raw_jobs:
@@ -740,3 +765,19 @@ class JobService:
         if isinstance(value, datetime):
             return value
         return None
+
+    @staticmethod
+    def _normalize_optional_filter(value: str | None) -> str | None:
+        """Normalize optional text filters before repository usage.
+
+        Args:
+            value: Optional raw query parameter string.
+
+        Returns:
+            Trimmed filter value when non-empty, otherwise ``None``.
+        """
+        if value is None:
+            return None
+
+        normalized = value.strip()
+        return normalized or None

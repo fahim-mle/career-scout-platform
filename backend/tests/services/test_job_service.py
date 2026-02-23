@@ -93,12 +93,30 @@ class FakeJobRepository:
         limit: int = 100,
         platform: str | None = None,
         is_active: bool = True,
+        job_type: str | None = None,
+        search: str | None = None,
     ) -> list[SimpleNamespace]:
         if self.fail_get_all:
             raise RepositoryError("repo get_all failed")
         items = [job for job in self.jobs.values() if job.is_active is is_active]
         if platform is not None:
             items = [job for job in items if job.platform == platform]
+        if job_type is not None:
+            probe = job_type.lower()
+            items = [
+                job
+                for job in items
+                if isinstance(job.job_type, str) and probe in job.job_type.lower()
+            ]
+        if search is not None:
+            probe = search.lower()
+            items = [
+                job
+                for job in items
+                if probe in job.title.lower()
+                or probe in job.company.lower()
+                or probe in job.location.lower()
+            ]
         items.sort(key=lambda item: item.id, reverse=True)
         return items[skip : skip + limit]
 

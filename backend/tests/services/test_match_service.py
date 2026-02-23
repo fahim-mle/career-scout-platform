@@ -161,9 +161,9 @@ class FakeMatchScoreRepository:
     scored_jobs: list[tuple[SimpleNamespace, int]] = field(default_factory=list)
     fail_upsert_ids: set[int] = field(default_factory=set)
     upsert_calls: list[tuple[int, int, dict[str, Any]]] = field(default_factory=list)
-    get_jobs_by_score_calls: list[tuple[int, int, int, str | None, bool]] = field(
-        default_factory=list
-    )
+    get_jobs_by_score_calls: list[
+        tuple[int, int, int, str | None, bool, str | None, str | None]
+    ] = field(default_factory=list)
     _counter: int = 0
 
     async def get_by_job_and_profile(
@@ -233,6 +233,8 @@ class FakeMatchScoreRepository:
         limit: int = 100,
         platform: str | None = None,
         is_active: bool = True,
+        job_type: str | None = None,
+        search: str | None = None,
     ) -> list[tuple[SimpleNamespace, int]]:
         """List scored jobs for assertions in relevance listing tests.
 
@@ -247,7 +249,7 @@ class FakeMatchScoreRepository:
             Filtered scored job tuples.
         """
         self.get_jobs_by_score_calls.append(
-            (profile_id, skip, limit, platform, is_active)
+            (profile_id, skip, limit, platform, is_active, job_type, search)
         )
         rows = [
             row
@@ -255,6 +257,22 @@ class FakeMatchScoreRepository:
             if row[0].is_active is is_active
             and (platform is None or row[0].platform == platform)
         ]
+        if job_type is not None:
+            probe = job_type.lower()
+            rows = [
+                row
+                for row in rows
+                if isinstance(row[0].job_type, str) and probe in row[0].job_type.lower()
+            ]
+        if search is not None:
+            probe = search.lower()
+            rows = [
+                row
+                for row in rows
+                if probe in row[0].title.lower()
+                or probe in row[0].company.lower()
+                or probe in row[0].location.lower()
+            ]
         return rows[skip : skip + limit]
 
 
@@ -683,7 +701,54 @@ async def test_list_jobs_by_relevance_returns_scored_jobs_sorted() -> None:
 
     assert [row.id for row in results] == [2, 1]
     assert [row.relevance_score for row in results] == [95, 82]
-    assert match_repo.get_jobs_by_score_calls[0] == (7, 0, 10, None, True)
+    assert match_repo.get_jobs_by_score_calls[0] == (7, 0, 10, None, True, None, None)
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_by_relevance_passes_trimmed_filters() -> None:
+    profile_repo = FakeProfileRepository(profiles={7: make_profile(id=7)})
+    match_repo = FakeMatchScoreRepository(
+        scored_jobs=[
+            (make_job(id=2, job_type="Full-time", title="Python Engineer"), 95),
+        ]
+    )
+    service = make_service(
+        FakeJobRepository(),
+        profile_repo,
+        match_repo,
+        FakeLLMClient(responses=[]),
+    )
+
+    results = await service.list_jobs_by_relevance(
+        skip=0,
+        limit=10,
+        job_type="  full-time  ",
+        search="  python  ",
+    )
+
+    assert [row.id for row in results] == [2]
+    assert match_repo.get_jobs_by_score_calls[0] == (
+        7,
+        0,
+        10,
+        None,
+        True,
+        "full-time",
+        "python",
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_by_relevance_rejects_invalid_platform() -> None:
+    service = make_service(
+        FakeJobRepository(),
+        FakeProfileRepository(profiles={1: make_profile(id=1)}),
+        FakeMatchScoreRepository(),
+        FakeLLMClient(responses=[]),
+    )
+
+    with pytest.raises(BusinessLogicError, match="Invalid platform"):
+        await service.list_jobs_by_relevance(platform="monster")
 
 
 @pytest.mark.asyncio

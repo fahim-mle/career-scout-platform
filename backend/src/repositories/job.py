@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -63,6 +63,8 @@ class JobRepository(BaseRepository[Job]):
         limit: int = 100,
         platform: str | None = None,
         is_active: bool = True,
+        job_type: str | None = None,
+        search: str | None = None,
     ) -> list[Job]:
         """Fetch paginated jobs.
 
@@ -71,6 +73,8 @@ class JobRepository(BaseRepository[Job]):
             limit: Maximum rows to return (max 1000).
             platform: Optional platform filter.
             is_active: Active status filter.
+            job_type: Optional job-type filter (case-insensitive match).
+            search: Optional keyword search across title, company, and location.
 
         Returns:
             List of jobs ordered by descending id.
@@ -92,6 +96,8 @@ class JobRepository(BaseRepository[Job]):
             limit=limit,
             platform=platform,
             is_active=is_active,
+            job_type=job_type,
+            search=search,
         )
         log.debug("Fetching jobs with pagination")
 
@@ -99,6 +105,21 @@ class JobRepository(BaseRepository[Job]):
             query = select(Job).where(Job.is_active == is_active)
             if platform is not None:
                 query = query.where(Job.platform == platform)
+            normalized_job_type = self._normalize_text_filter(job_type)
+            if normalized_job_type is not None:
+                term = self._contains_pattern(normalized_job_type)
+                query = query.where(Job.job_type.ilike(term, escape="\\"))
+
+            normalized_search = self._normalize_text_filter(search)
+            if normalized_search is not None:
+                term = self._contains_pattern(normalized_search)
+                query = query.where(
+                    or_(
+                        Job.title.ilike(term, escape="\\"),
+                        Job.company.ilike(term, escape="\\"),
+                        Job.location.ilike(term, escape="\\"),
+                    )
+                )
 
             with db_query_timer(query_type="get_all"):
                 result = await self.db.execute(
@@ -110,6 +131,35 @@ class JobRepository(BaseRepository[Job]):
         except SQLAlchemyError as exc:
             log.bind(error=str(exc)).error("Failed to fetch paginated jobs")
             raise RepositoryError("Failed to fetch jobs.") from exc
+
+    @staticmethod
+    def _normalize_text_filter(value: str | None) -> str | None:
+        """Normalize optional text filter by trimming whitespace.
+
+        Args:
+            value: Optional text filter from service layer.
+
+        Returns:
+            Trimmed string when non-empty, otherwise ``None``.
+        """
+        if value is None:
+            return None
+
+        normalized = value.strip()
+        return normalized or None
+
+    @staticmethod
+    def _contains_pattern(value: str) -> str:
+        """Build escaped SQL ILIKE contains pattern.
+
+        Args:
+            value: User-provided filter value.
+
+        Returns:
+            SQL pattern that performs case-insensitive contains matching.
+        """
+        escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        return f"%{escaped}%"
 
     async def create(self, job_data: dict[str, Any]) -> Job:
         """Create a new job record.

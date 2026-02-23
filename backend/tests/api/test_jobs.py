@@ -510,6 +510,109 @@ class TestJobsAPI:
         assert "create a profile first" in response.json()["detail"].lower()
 
     @pytest.mark.asyncio
+    async def test_list_jobs_sort_relevance_applies_filters(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        matching_payload = build_job_payload(
+            "api-sort-filter-1",
+            platform="seek",
+            title="Senior Python Engineer",
+            company="Acme",
+            location="Brisbane",
+        )
+        matching_payload["job_type"] = "Full-time (Permanent)"
+
+        wrong_job_type = build_job_payload(
+            "api-sort-filter-2",
+            platform="seek",
+            title="Python Engineer",
+            company="Acme",
+            location="Brisbane",
+        )
+        wrong_job_type["job_type"] = "Contract"
+
+        wrong_platform = build_job_payload(
+            "api-sort-filter-3",
+            platform="linkedin",
+            title="Senior Python Engineer",
+            company="Acme",
+            location="Brisbane",
+        )
+        wrong_platform["job_type"] = "Full-time"
+
+        create_responses = [
+            await client.post("/api/v1/jobs", json=payload)
+            for payload in [matching_payload, wrong_job_type, wrong_platform]
+        ]
+        assert all(response.status_code == 201 for response in create_responses)
+
+        profile = Profile(
+            name="Filter Tester",
+            location="Brisbane",
+            experience_years=5,
+            skills=["Python", "FastAPI"],
+            preferences={"remote": True},
+        )
+        db_session.add(profile)
+        await db_session.commit()
+        await db_session.refresh(profile)
+
+        created_ids = [response.json()["id"] for response in create_responses]
+        db_session.add_all(
+            [
+                MatchScore(
+                    job_id=created_ids[0],
+                    profile_id=profile.id,
+                    relevance_score=95,
+                    category="Most Relevant",
+                    explanation="Excellent fit",
+                    scored_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+                ),
+                MatchScore(
+                    job_id=created_ids[1],
+                    profile_id=profile.id,
+                    relevance_score=90,
+                    category="Most Relevant",
+                    explanation="Strong fit",
+                    scored_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+                ),
+                MatchScore(
+                    job_id=created_ids[2],
+                    profile_id=profile.id,
+                    relevance_score=88,
+                    category="Relevant",
+                    explanation="Good fit",
+                    scored_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+                ),
+            ]
+        )
+        await db_session.commit()
+
+        response = await client.get(
+            "/api/v1/jobs",
+            params={
+                "sort": "relevance",
+                "platform": "seek",
+                "job_type": "full-time",
+                "search": "python",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body) == 1
+        assert body[0]["id"] == created_ids[0]
+
+    @pytest.mark.asyncio
+    async def test_list_jobs_relevance_invalid_platform_returns_400(
+        self, client: AsyncClient
+    ) -> None:
+        response = await client.get("/api/v1/jobs?sort=relevance&platform=monster")
+
+        assert response.status_code == 400
+        assert "invalid platform" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
     async def test_get_job_by_id_success(self, client: AsyncClient) -> None:
         create_response = await client.post(
             "/api/v1/jobs", json=build_job_payload("api-get-1")
@@ -764,3 +867,98 @@ class TestJobsAPI:
 
         assert response.status_code == 400
         assert "cannot delete now" in response.json()["detail"].lower()
+
+
+# ── New filter / search tests ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_filters_by_job_type(client: AsyncClient) -> None:
+    """GET /jobs?job_type=Full-time should return only matching jobs."""
+    fulltime_payload = build_job_payload(
+        "jt-ft-1", platform="seek", title="Full-time Role"
+    )
+    fulltime_payload["job_type"] = "Full-time"
+    contract_payload = build_job_payload(
+        "jt-ct-1", platform="seek", title="Contract Role"
+    )
+    contract_payload["job_type"] = "Contract"
+
+    r1 = await client.post("/api/v1/jobs", json=fulltime_payload)
+    r2 = await client.post("/api/v1/jobs", json=contract_payload)
+    assert r1.status_code == 201
+    assert r2.status_code == 201
+
+    response = await client.get("/api/v1/jobs", params={"job_type": "Full-time"})
+
+    assert response.status_code == 200
+    titles = [j["title"] for j in response.json()]
+    assert "Full-time Role" in titles
+    assert "Contract Role" not in titles
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_search_filters_by_title(client: AsyncClient) -> None:
+    """GET /jobs?search=<keyword> should return only jobs matching title/company/location."""
+    eng_payload = build_job_payload(
+        "srch-api-1", platform="linkedin", title="Python Engineer"
+    )
+    des_payload = build_job_payload(
+        "srch-api-2", platform="linkedin", title="UX Designer"
+    )
+
+    r1 = await client.post("/api/v1/jobs", json=eng_payload)
+    r2 = await client.post("/api/v1/jobs", json=des_payload)
+    assert r1.status_code == 201
+    assert r2.status_code == 201
+
+    response = await client.get("/api/v1/jobs", params={"search": "python"})
+
+    assert response.status_code == 200
+    titles = [j["title"] for j in response.json()]
+    assert "Python Engineer" in titles
+    assert "UX Designer" not in titles
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_search_empty_result(client: AsyncClient) -> None:
+    """GET /jobs?search=<no match> should return empty list."""
+    response = await client.get(
+        "/api/v1/jobs", params={"search": "xyzzy-guaranteed-no-match-api"}
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_list_jobs_combined_job_type_and_search(client: AsyncClient) -> None:
+    """Combining job_type and search should apply both filters (AND logic)."""
+    match_payload = build_job_payload(
+        "comb-1", platform="seek", title="Contract Python Dev"
+    )
+    match_payload["job_type"] = "Contract"
+
+    no_match_fulltime = build_job_payload(
+        "comb-2", platform="seek", title="Full-time Python Dev"
+    )
+    no_match_fulltime["job_type"] = "Full-time"
+
+    no_match_contract = build_job_payload(
+        "comb-3", platform="seek", title="Contract Java Dev"
+    )
+    no_match_contract["job_type"] = "Contract"
+
+    for p in [match_payload, no_match_fulltime, no_match_contract]:
+        r = await client.post("/api/v1/jobs", json=p)
+        assert r.status_code == 201
+
+    response = await client.get(
+        "/api/v1/jobs", params={"job_type": "Contract", "search": "python"}
+    )
+
+    assert response.status_code == 200
+    titles = [j["title"] for j in response.json()]
+    assert "Contract Python Dev" in titles
+    assert "Full-time Python Dev" not in titles
+    assert "Contract Java Dev" not in titles
