@@ -46,6 +46,17 @@ class SeekScraper(BaseScraper):
         'div[data-automation="jobAdDetails"]',
         'div[data-automation="job-description"]',
     )
+    DESCRIPTION_HTML_SELECTORS = (
+        'article[data-automation="jobAdDetails"]',
+        'section[data-automation="jobAdDetails"]',
+        'div[data-automation="jobAdDetails"]',
+        'div[data-automation="job-description"]',
+    )
+    DESCRIPTION_HTML_FALLBACK_SELECTORS = (
+        "main",
+        "article",
+        '[data-testid="job-details"]',
+    )
     CLASSIFICATIONS_SELECTORS = (
         '*[data-automation="job-detail-classifications"]',
         '*[data-automation="jobClassifications"]',
@@ -156,10 +167,21 @@ class SeekScraper(BaseScraper):
         description_full = self._normalize_text(description_full or "")
         description_short = self._build_short_description(description_full)
 
+        raw_description_html: str | None = None
+        try:
+            raw_description_html = await self._extract_raw_description_html()
+        except Exception as exc:
+            logger.bind(
+                scraper=self.__class__.__name__,
+                url=job_url,
+                error=str(exc),
+            ).warning("Failed Seek raw description HTML extraction")
+
         details: dict[str, Any] = {}
         if description_full:
             details["description_full"] = description_full
             details["description_short"] = description_short
+        details["scraped_jobs"] = raw_description_html
 
         job_type = await self._extract_job_type()
         if job_type:
@@ -245,6 +267,77 @@ class SeekScraper(BaseScraper):
                     return normalized
             except PlaywrightTimeoutError:
                 continue
+        return None
+
+    async def _extract_raw_description_html(self) -> str | None:
+        """Extract raw description HTML using durable selectors then fallback path."""
+        primary_html = await self._extract_html_from_page_selectors(
+            selectors=self.DESCRIPTION_HTML_SELECTORS,
+            extraction_label="description_html_primary",
+            fallback_path="primary",
+        )
+        if primary_html:
+            return primary_html
+
+        logger.bind(scraper=self.__class__.__name__).info(
+            "Seek description HTML primary selectors missed; trying fallback"
+        )
+        fallback_html = await self._extract_html_from_page_selectors(
+            selectors=self.DESCRIPTION_HTML_FALLBACK_SELECTORS,
+            extraction_label="description_html_fallback",
+            fallback_path="fallback",
+        )
+        if fallback_html:
+            return fallback_html
+
+        logger.bind(scraper=self.__class__.__name__).info(
+            "Seek description HTML not found across selector chain"
+        )
+        return None
+
+    async def _extract_html_from_page_selectors(
+        self,
+        selectors: tuple[str, ...],
+        extraction_label: str,
+        fallback_path: str,
+    ) -> str | None:
+        """Extract raw outer HTML from first matching selector."""
+        if self.page is None:
+            raise RuntimeError("Scraper page is not initialized")
+
+        for selector in selectors:
+            element = await self.page.query_selector(selector)
+            if element is None:
+                continue
+
+            try:
+                raw_html = await element.evaluate("node => node.outerHTML")
+                if isinstance(raw_html, str) and raw_html.strip():
+                    logger.bind(
+                        scraper=self.__class__.__name__,
+                        selector=selector,
+                        extraction_label=extraction_label,
+                        fallback_path=fallback_path,
+                    ).info("Extracted Seek raw description HTML")
+                    return raw_html.strip()
+            except PlaywrightTimeoutError:
+                logger.bind(
+                    scraper=self.__class__.__name__,
+                    selector=selector,
+                    extraction_label=extraction_label,
+                    fallback_path=fallback_path,
+                ).debug("Seek raw HTML extraction timed out")
+                continue
+            except Exception as exc:
+                logger.bind(
+                    scraper=self.__class__.__name__,
+                    selector=selector,
+                    extraction_label=extraction_label,
+                    fallback_path=fallback_path,
+                    error=str(exc),
+                ).debug("Seek raw HTML extraction failed for selector")
+                continue
+
         return None
 
     async def _extract_job_type(self) -> str | None:
