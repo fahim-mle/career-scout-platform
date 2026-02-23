@@ -52,6 +52,16 @@ class IndeedScraper(BaseScraper):
         "div#jobDescriptionText",
         "main",
     )
+    DESCRIPTION_HTML_SELECTORS = (
+        "#jobDescriptionText",
+        'div[data-testid="jobsearch-JobComponent-description"]',
+        'section[data-testid="jobsearch-jobDescriptionContainer"]',
+    )
+    DESCRIPTION_HTML_FALLBACK_SELECTORS = (
+        "main",
+        "article",
+        "body",
+    )
     SALARY_AND_TYPE_SELECTORS = (
         "#salaryInfoAndJobType",
         '[data-testid="salaryInfoAndJobType"]',
@@ -196,10 +206,21 @@ class IndeedScraper(BaseScraper):
         )
         description_short = self._build_short_description(description_full)
 
+        raw_description_html: str | None = None
+        try:
+            raw_description_html = await self._extract_raw_description_html()
+        except Exception as exc:
+            logger.bind(
+                scraper=self.__class__.__name__,
+                url=job_url,
+                error=str(exc),
+            ).warning("Failed Indeed raw description HTML extraction")
+
         details: dict[str, Any] = {}
         if description_full:
             details["description_full"] = description_full
             details["description_short"] = description_short
+        details["scraped_jobs"] = raw_description_html
 
         salary_type_text = await self._extract_text_from_page_selectors(
             selectors=self.SALARY_AND_TYPE_SELECTORS
@@ -214,6 +235,38 @@ class IndeedScraper(BaseScraper):
             details["job_type"] = job_type
 
         return details
+
+    async def _extract_raw_description_html(self) -> str | None:
+        """Extract raw description HTML using stable selectors then fallback path.
+
+        Returns:
+            Raw HTML string from the first matching description container,
+            otherwise ``None``.
+
+        Raises:
+            RuntimeError: If scraper page is not initialized.
+        """
+        primary_html = await self._extract_html_from_page_selectors(
+            selectors=self.DESCRIPTION_HTML_SELECTORS,
+            extraction_label="description_html_primary",
+        )
+        if primary_html:
+            return primary_html
+
+        logger.bind(scraper=self.__class__.__name__).info(
+            "Indeed description HTML primary selectors missed; trying fallback"
+        )
+        fallback_html = await self._extract_html_from_page_selectors(
+            selectors=self.DESCRIPTION_HTML_FALLBACK_SELECTORS,
+            extraction_label="description_html_fallback",
+        )
+        if fallback_html:
+            return fallback_html
+
+        logger.bind(scraper=self.__class__.__name__).info(
+            "Indeed description HTML not found across selector chain"
+        )
+        return None
 
     async def _collect_job_cards(self) -> list[ElementHandle]:
         """Collect list card elements from the Indeed search page.
@@ -404,6 +457,58 @@ class IndeedScraper(BaseScraper):
                     return normalized
             except PlaywrightTimeoutError:
                 continue
+        return None
+
+    async def _extract_html_from_page_selectors(
+        self,
+        selectors: tuple[str, ...],
+        extraction_label: str,
+    ) -> str | None:
+        """Extract raw outer HTML from first matching selector.
+
+        Args:
+            selectors: Ordered CSS selector fallbacks.
+            extraction_label: Structured log label for extraction context.
+
+        Returns:
+            Raw outer HTML string when found, otherwise ``None``.
+
+        Raises:
+            RuntimeError: If scraper page is not initialized.
+        """
+        if self.page is None:
+            raise RuntimeError("Scraper page is not initialized")
+
+        for selector in selectors:
+            element = await self.page.query_selector(selector)
+            if element is None:
+                continue
+
+            try:
+                raw_html = await element.evaluate("node => node.outerHTML")
+                if isinstance(raw_html, str) and raw_html.strip():
+                    logger.bind(
+                        scraper=self.__class__.__name__,
+                        selector=selector,
+                        extraction_label=extraction_label,
+                    ).info("Extracted Indeed raw description HTML")
+                    return raw_html.strip()
+            except PlaywrightTimeoutError:
+                logger.bind(
+                    scraper=self.__class__.__name__,
+                    selector=selector,
+                    extraction_label=extraction_label,
+                ).debug("Indeed raw HTML extraction timed out")
+                continue
+            except Exception as exc:
+                logger.bind(
+                    scraper=self.__class__.__name__,
+                    selector=selector,
+                    extraction_label=extraction_label,
+                    error=str(exc),
+                ).debug("Indeed raw HTML extraction failed for selector")
+                continue
+
         return None
 
     @classmethod
