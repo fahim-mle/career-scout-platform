@@ -179,8 +179,34 @@ def _build_job_update_payload(
     for field in enrichable_fields:
         current_value = getattr(existing_job, field, None)
         new_value = scraped_payload.get(field)
-        if current_value is None and _has_meaningful_value(new_value):
+        has_current_value = _has_meaningful_value(current_value)
+        has_new_value = _has_meaningful_value(new_value)
+
+        if not has_current_value and has_new_value:
             updates[field] = new_value
+            logger.bind(
+                operation="build_job_update_payload",
+                field=field,
+                decision="apply",
+            ).debug("Applying enrichment field update")
+            continue
+
+        if has_current_value and not has_new_value:
+            logger.bind(
+                operation="build_job_update_payload",
+                field=field,
+                decision="skip_incoming_empty",
+            ).debug("Skipping enrichment field update because incoming value is empty")
+            continue
+
+        if has_current_value and has_new_value:
+            logger.bind(
+                operation="build_job_update_payload",
+                field=field,
+                decision="skip_existing_present",
+            ).debug(
+                "Skipping enrichment field update because existing value is already set"
+            )
 
     existing_title = getattr(existing_job, "title", None)
     incoming_title = scraped_payload.get("title")
