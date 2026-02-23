@@ -696,6 +696,138 @@ def test_run_seek_scrape_and_persist_maps_metadata_and_persists_fields(
     assert "metadata" not in captured_payloads[0]
 
 
+def test_run_linkedin_scrape_and_persist_updates_empty_fields_with_meaningful_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LinkedIn update path should enrich empty raw html and metadata fields."""
+    fake_scraped_jobs = [
+        {
+            "external_id": "linkedin-existing-1",
+            "platform": "linkedin",
+            "scraped_jobs": '<div id="job-details">Fresh role details</div>',
+            "metadata": {"platform": "linkedin", "date_posted": "Today"},
+        }
+    ]
+
+    update_payloads: list[dict[str, Any]] = []
+
+    class FakeJobRepository:
+        def __init__(self, db_session: Any) -> None:
+            self.db_session = db_session
+
+        async def get_by_external_id(self, external_id: str, platform: str) -> Any:
+            del external_id, platform
+            return SimpleNamespace(
+                id=707,
+                title="Backend Engineer",
+                description_full="existing full",
+                description_short="existing short",
+                job_type="Full-Time",
+                scraped_jobs="",
+                platform_metadata={},
+            )
+
+        async def create(self, payload: dict[str, Any]) -> Any:
+            del payload
+            raise AssertionError("create should not be called in update path")
+
+        async def update(self, job_id: int, payload: dict[str, Any]) -> Any:
+            update_payloads.append({"job_id": job_id, "payload": payload})
+            return SimpleNamespace(id=job_id)
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "LinkedInScraper",
+        make_scraper_double(fake_scraped_jobs, class_name="FakeLinkedInScraper"),
+    )
+    monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
+    monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
+
+    result = asyncio.run(
+        scraper_tasks._run_linkedin_scrape_and_persist(
+            query="python",
+            location="remote",
+            limit=3,
+            task_id="task-98",
+        )
+    )
+
+    assert result["created"] == 0
+    assert result["updated"] == 1
+    assert result["duplicates"] == 0
+    assert len(update_payloads) == 1
+    assert update_payloads[0]["job_id"] == 707
+    assert update_payloads[0]["payload"] == {
+        "scraped_jobs": '<div id="job-details">Fresh role details</div>',
+        "platform_metadata": {"platform": "linkedin", "date_posted": "Today"},
+    }
+
+
+def test_run_linkedin_scrape_and_persist_does_not_overwrite_existing_enriched_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LinkedIn update path should not overwrite already populated enrichments."""
+    fake_scraped_jobs = [
+        {
+            "external_id": "linkedin-existing-2",
+            "platform": "linkedin",
+            "scraped_jobs": '<div id="job-details">New details</div>',
+            "metadata": {"platform": "linkedin", "date_posted": "Today"},
+            "description_full": "new full description",
+        }
+    ]
+
+    update_called = False
+
+    class FakeJobRepository:
+        def __init__(self, db_session: Any) -> None:
+            self.db_session = db_session
+
+        async def get_by_external_id(self, external_id: str, platform: str) -> Any:
+            del external_id, platform
+            return SimpleNamespace(
+                id=808,
+                title="Backend Engineer",
+                description_full="existing full",
+                description_short="existing short",
+                job_type="Full-Time",
+                scraped_jobs='<div id="job-details">Existing details</div>',
+                platform_metadata={"platform": "linkedin", "date_posted": "Yesterday"},
+            )
+
+        async def create(self, payload: dict[str, Any]) -> Any:
+            del payload
+            raise AssertionError("create should not be called in update path")
+
+        async def update(self, job_id: int, payload: dict[str, Any]) -> Any:
+            del job_id, payload
+            nonlocal update_called
+            update_called = True
+            raise AssertionError("update should not be called for populated fields")
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "LinkedInScraper",
+        make_scraper_double(fake_scraped_jobs, class_name="FakeLinkedInScraper"),
+    )
+    monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
+    monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
+
+    result = asyncio.run(
+        scraper_tasks._run_linkedin_scrape_and_persist(
+            query="python",
+            location="remote",
+            limit=3,
+            task_id="task-98",
+        )
+    )
+
+    assert result["created"] == 0
+    assert result["updated"] == 0
+    assert result["duplicates"] == 1
+    assert update_called is False
+
+
 def test_run_seek_scrape_and_persist_updates_empty_fields_with_meaningful_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
