@@ -246,8 +246,8 @@ async def test_scrape_job_details_extracts_full_metadata_payload() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scrape_job_details_sets_scraped_jobs_none_when_html_missing() -> None:
-    """Detail scraping should keep running when raw HTML cannot be extracted."""
+async def test_scrape_job_details_omits_scraped_jobs_when_html_missing() -> None:
+    """Detail scraping should omit raw HTML key when extraction misses."""
     scraper = IndeedScraper()
     scraper.page = cast(
         Any,
@@ -270,7 +270,7 @@ async def test_scrape_job_details_sets_scraped_jobs_none_when_html_missing() -> 
 
     assert details["description_full"] == "Text extraction still works"
     assert details["description_short"] == "Text extraction still works"
-    assert details["scraped_jobs"] is None
+    assert "scraped_jobs" not in details
     assert details["metadata"] == {"platform": "indeed"}
 
 

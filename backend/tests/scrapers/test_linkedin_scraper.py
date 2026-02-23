@@ -318,6 +318,35 @@ async def test_extract_top_card_metadata_returns_defaults_when_missing() -> None
     }
 
 
+@pytest.mark.asyncio
+async def test_extract_top_card_metadata_uses_next_selector_when_first_is_empty() -> (
+    None
+):
+    """Top-card extraction should continue selector chain after empty metadata."""
+    scraper = LinkedInScraper()
+    scraper.page = cast(
+        Any,
+        _FakePage(
+            elements={
+                scraper.TOP_CARD_METADATA_SELECTORS[0]: _FakeElement(text="   "),
+                scraper.TOP_CARD_METADATA_SELECTORS[1]: _FakeElement(
+                    text=(
+                        "Melbourne, Victoria, Australia · 2 days ago · "
+                        "Over 25 applicants"
+                    )
+                ),
+            }
+        ),
+    )
+
+    metadata = await scraper._extract_top_card_metadata()
+
+    assert metadata["platform"] == "linkedin"
+    assert metadata["location"] == "Melbourne, Victoria, Australia"
+    assert metadata["date_posted"] == "2 days ago"
+    assert metadata["number_of_applicants"] == "Over 25 applicants"
+
+
 def test_parse_top_card_metadata_text_maps_all_expected_fields() -> None:
     """Top-card parser should extract location/date/applicants and status flags."""
     metadata = LinkedInScraper._parse_top_card_metadata_text(

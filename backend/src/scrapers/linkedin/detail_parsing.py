@@ -90,6 +90,13 @@ class LinkedInDetailParsingMixin:
                 continue
 
             parsed = self._parse_top_card_metadata_text(raw_text)
+            if not self._has_meaningful_top_card_metadata(parsed):
+                logger.bind(
+                    scraper=self.__class__.__name__,
+                    selector=selector,
+                ).debug("LinkedIn top-card metadata selector returned empty defaults")
+                continue
+
             metadata.update(parsed)
             logger.bind(
                 scraper=self.__class__.__name__,
@@ -106,6 +113,26 @@ class LinkedInDetailParsingMixin:
             "LinkedIn top-card metadata block not found; using defaults"
         )
         return metadata
+
+    @staticmethod
+    def _has_meaningful_top_card_metadata(parsed: dict[str, Any]) -> bool:
+        """Return whether parsed top-card metadata includes meaningful values.
+
+        Args:
+            parsed: Metadata payload without fixed platform key.
+
+        Returns:
+            ``True`` when any non-default metadata field was extracted.
+        """
+        return any(
+            (
+                parsed.get("location"),
+                parsed.get("date_posted"),
+                parsed.get("number_of_applicants"),
+                parsed.get("promoted_by_hirer") is True,
+                parsed.get("actively_reviewing_applicants") is True,
+            )
+        )
 
     async def _extract_description_with_fallback(self) -> str | None:
         """Extract job description using staged fallback strategy.
