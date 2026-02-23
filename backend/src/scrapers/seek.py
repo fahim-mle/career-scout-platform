@@ -69,6 +69,11 @@ class SeekScraper(BaseScraper):
         '*[data-automation="job-detail-location"]',
         '*[data-automation="jobDetailLocation"]',
     )
+    DATE_POSTED_SELECTORS = (
+        '*[data-automation="job-detail-date"]',
+        '*[data-automation="jobDetailDate"]',
+        '*[data-automation="jobDate"]',
+    )
     SALARY_SELECTORS = (
         '*[data-automation="job-detail-salary"]',
         '*[data-automation="jobSalary"]',
@@ -187,7 +192,10 @@ class SeekScraper(BaseScraper):
         if job_type:
             details["job_type"] = job_type
 
-        salary_range = await self._extract_salary_range()
+        salary_text = await self._extract_text_from_page_selectors(
+            selectors=self.SALARY_SELECTORS
+        )
+        salary_range = self._extract_salary_range_from_text(salary_text)
         if salary_range:
             details["salary_range"] = salary_range
 
@@ -197,7 +205,57 @@ class SeekScraper(BaseScraper):
         if location_detail:
             details["location"] = location_detail
 
+        details["metadata"] = await self._extract_seek_metadata(
+            location=location_detail,
+            work_type=job_type,
+            salary_text=salary_text,
+        )
+
         return details
+
+    async def _extract_seek_metadata(
+        self,
+        location: str | None,
+        work_type: str | None,
+        salary_text: str | None,
+    ) -> dict[str, Any]:
+        """Extract Seek metadata into generic payload keys.
+
+        Args:
+            location: Optional location text extracted from detail page.
+            work_type: Optional work type text inferred from detail selectors.
+            salary_text: Optional raw salary text extracted from detail selectors.
+
+        Returns:
+            Metadata dictionary containing platform and available Seek fields.
+        """
+        date_posted = await self._extract_text_from_page_selectors(
+            selectors=self.DATE_POSTED_SELECTORS
+        )
+        classifications = await self._extract_text_from_page_selectors(
+            selectors=self.CLASSIFICATIONS_SELECTORS
+        )
+        classification, subclassification = self._extract_classification_parts(
+            classifications
+        )
+
+        metadata: dict[str, Any] = {"platform": self.PLATFORM}
+        optional_fields = {
+            "location": location,
+            "date_posted": date_posted,
+            "work_type": work_type,
+            "classification": classification,
+            "subclassification": subclassification,
+            "salary_text": salary_text,
+        }
+        metadata.update(
+            {
+                key: value
+                for key, value in optional_fields.items()
+                if value is not None and str(value).strip() != ""
+            }
+        )
+        return metadata
 
     async def _collect_job_cards(self) -> list[ElementHandle]:
         """Collect job card elements from search results."""
@@ -366,6 +424,20 @@ class SeekScraper(BaseScraper):
         salary_text = await self._extract_text_from_page_selectors(
             self.SALARY_SELECTORS
         )
+        return self._extract_salary_range_from_text(salary_text)
+
+    def _extract_salary_range_from_text(
+        self,
+        salary_text: str | None,
+    ) -> dict[str, Any] | None:
+        """Extract salary range from salary text.
+
+        Args:
+            salary_text: Raw salary text from detail page.
+
+        Returns:
+            Structured salary payload when min/max values are found.
+        """
         if not salary_text:
             return None
 
@@ -386,6 +458,32 @@ class SeekScraper(BaseScraper):
             "currency": "AUD",
             "raw": salary_text,
         }
+
+    @classmethod
+    def _extract_classification_parts(
+        cls,
+        value: str | None,
+    ) -> tuple[str | None, str | None]:
+        """Split classification text into classification/subclassification.
+
+        Args:
+            value: Raw classification text from detail page.
+
+        Returns:
+            Tuple of ``(classification, subclassification)`` values.
+        """
+        normalized = cls._normalize_text(value or "")
+        if not normalized:
+            return (None, None)
+
+        for delimiter in (" / ", " - ", " | ", ": "):
+            if delimiter in normalized:
+                left, right = normalized.split(delimiter, maxsplit=1)
+                classification = cls._normalize_text(left)
+                subclassification = cls._normalize_text(right)
+                return (classification, subclassification)
+
+        return (normalized, None)
 
     async def _extract_first_text(
         self,

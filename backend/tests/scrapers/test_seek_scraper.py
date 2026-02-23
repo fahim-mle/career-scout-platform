@@ -106,6 +106,7 @@ async def test_scrape_job_details_extracts_raw_description_html() -> None:
     assert details["description_full"] == "Build APIs with FastAPI"
     assert details["description_short"] == "Build APIs with FastAPI"
     assert details["scraped_jobs"] == html_block
+    assert details["metadata"] == {"platform": "seek"}
 
 
 @pytest.mark.asyncio
@@ -133,6 +134,96 @@ async def test_scrape_job_details_sets_scraped_jobs_none_when_html_missing() -> 
     assert details["description_full"] == "Reliable text payload"
     assert details["description_short"] == "Reliable text payload"
     assert details["scraped_jobs"] is None
+    assert details["metadata"] == {"platform": "seek"}
+
+
+@pytest.mark.asyncio
+async def test_scrape_job_details_extracts_full_seek_metadata() -> None:
+    """Detail scraping should extract complete Seek metadata when available."""
+    html_block = '<div data-automation="jobAdDetails"><p>Build APIs</p></div>'
+    scraper = SeekScraper()
+    scraper.page = cast(
+        Any,
+        _FakePage(
+            elements={
+                'div[data-automation="jobAdDetails"]': _FakeElement(
+                    text="Build APIs with FastAPI",
+                    outer_html=html_block,
+                ),
+                '*[data-automation="job-detail-work-type"]': _FakeElement(
+                    text="Full time"
+                ),
+                '*[data-automation="job-detail-classifications"]': _FakeElement(
+                    text="Engineering / Software"
+                ),
+                '*[data-automation="job-detail-location"]': _FakeElement(
+                    text="Sydney NSW"
+                ),
+                '*[data-automation="job-detail-date"]': _FakeElement(
+                    text="Posted 2d ago"
+                ),
+                '*[data-automation="job-detail-salary"]': _FakeElement(
+                    text="$120k - $140k + super"
+                ),
+            }
+        ),
+    )
+
+    async def noop_rate_limit(seconds: float | None = None) -> None:
+        del seconds
+
+    scraper.rate_limit = noop_rate_limit  # type: ignore[method-assign]
+
+    details = await scraper.scrape_job_details("https://www.seek.com.au/job/81234567")
+
+    assert details["job_type"] == "Full time"
+    assert details["location"] == "Sydney NSW"
+    assert details["salary_range"] == {
+        "min": 120000,
+        "max": 140000,
+        "currency": "AUD",
+        "raw": "$120k - $140k + super",
+    }
+    assert details["metadata"] == {
+        "platform": "seek",
+        "location": "Sydney NSW",
+        "date_posted": "Posted 2d ago",
+        "work_type": "Full time",
+        "classification": "Engineering",
+        "subclassification": "Software",
+        "salary_text": "$120k - $140k + super",
+    }
+
+
+@pytest.mark.asyncio
+async def test_scrape_job_details_extracts_partial_seek_metadata() -> None:
+    """Detail scraping should return partial metadata for sparse pages."""
+    scraper = SeekScraper()
+    scraper.page = cast(
+        Any,
+        _FakePage(
+            elements={
+                'div[data-automation="jobAdDetails"]': _FakeElement(
+                    text="Simple description"
+                ),
+                '*[data-automation="job-detail-classifications"]': _FakeElement(
+                    text="Community Services"
+                ),
+            }
+        ),
+    )
+
+    async def noop_rate_limit(seconds: float | None = None) -> None:
+        del seconds
+
+    scraper.rate_limit = noop_rate_limit  # type: ignore[method-assign]
+
+    details = await scraper.scrape_job_details("https://www.seek.com.au/job/81234567")
+
+    assert details["metadata"] == {
+        "platform": "seek",
+        "classification": "Community Services",
+    }
 
 
 @pytest.mark.asyncio
@@ -165,4 +256,8 @@ async def test_scrape_job_details_keeps_existing_text_behavior() -> None:
     assert (
         len(details["description_short"])
         <= SeekScraper.SHORT_DESCRIPTION_MAX_LENGTH + 3
+    )
+    assert (
+        details["scraped_jobs"]
+        == '<div data-automation="jobAdDetails"><p>seek</p></div>'
     )
