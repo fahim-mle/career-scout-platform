@@ -246,6 +246,64 @@ class TestJobsAPI:
         assert raw_body["metadata"] == payload["metadata"]
 
     @pytest.mark.asyncio
+    async def test_jobs_endpoints_roundtrip_indeed_payload_without_contract_regression(
+        self, client: AsyncClient
+    ) -> None:
+        """Indeed-flavored payload should preserve API contract and metadata fields."""
+        payload = build_job_payload(
+            "api-indeed-roundtrip-1",
+            platform="indeed",
+            location="Brisbane QLD",
+        )
+        payload["description_short"] = "Own backend integrations"
+        payload["description_full"] = "Build resilient async services for job ingestion"
+        payload["job_type"] = "Full-Time"
+        payload["salary_range"] = {
+            "min": 125000,
+            "max": 155000,
+            "currency": "AUD",
+            "raw": "$125k - $155k per year",
+        }
+        payload["scraped_jobs"] = (
+            '<div id="jobDescriptionText"><p>Indeed details</p></div>'
+        )
+        payload["metadata"] = {
+            "platform": "indeed",
+            "location": "Brisbane QLD",
+            "date_posted": "Posted today",
+            "work_type": "Full-Time",
+            "salary_text": "$125k - $155k per year",
+            "company_rating": "4.4/5",
+            "benefits": ["Work from home", "Gym membership"],
+        }
+
+        create_response = await client.post("/api/v1/jobs", json=payload)
+
+        assert create_response.status_code == 201
+        created = create_response.json()
+        job_id = created["id"]
+        assert created["platform"] == "indeed"
+        assert created["scraped_jobs"] == payload["scraped_jobs"]
+        assert created["metadata"] == payload["metadata"]
+        assert created["salary_range"] == payload["salary_range"]
+
+        enriched_response = await client.get(f"/api/v1/jobs/{job_id}")
+        raw_response = await client.get(f"/api/v1/scraped_raw_jobs/{job_id}")
+
+        assert enriched_response.status_code == 200
+        assert raw_response.status_code == 200
+        enriched_body = enriched_response.json()
+        raw_body = raw_response.json()
+
+        assert_enriched_job_shape(enriched_body)
+        assert enriched_body["platform"] == "indeed"
+        assert "metadata" in enriched_body
+        assert raw_body["platform"] == "indeed"
+        assert raw_body["salary_range"] == payload["salary_range"]
+        assert raw_body["scraped_jobs"] == payload["scraped_jobs"]
+        assert raw_body["metadata"] == payload["metadata"]
+
+    @pytest.mark.asyncio
     async def test_list_jobs_with_data(self, client: AsyncClient) -> None:
         await client.post("/api/v1/jobs", json=build_job_payload("api-list-1"))
         await client.post("/api/v1/jobs", json=build_job_payload("api-list-2"))

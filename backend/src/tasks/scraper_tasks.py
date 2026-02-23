@@ -233,18 +233,22 @@ def _normalize_scraped_payload(scraped_payload: dict[str, Any]) -> dict[str, Any
     normalized_payload = dict(scraped_payload)
     metadata_payload = normalized_payload.pop("metadata", None)
 
+    external_id = str(normalized_payload.get("external_id", ""))
+
     if metadata_payload is not None and "platform_metadata" not in normalized_payload:
         normalized_payload["platform_metadata"] = metadata_payload
         logger.bind(
             operation="normalize_scraped_payload",
             mapped_field="metadata->platform_metadata",
-            has_metadata=bool(metadata_payload),
+            external_id=external_id,
+            has_metadata_payload=True,
         ).debug("Mapped scraper metadata payload for repository compatibility")
     elif metadata_payload is not None:
         logger.bind(
             operation="normalize_scraped_payload",
             discarded_field="metadata",
             preserved_field="platform_metadata",
+            external_id=external_id,
         ).debug(
             "Discarded incoming metadata payload because platform_metadata already exists"
         )
@@ -486,6 +490,13 @@ async def _run_scrape_and_persist(
                         scraped_payload=normalized_payload,
                     )
                     if update_payload:
+                        logger.bind(
+                            operation="run_scrape_and_persist",
+                            platform=platform,
+                            external_id=external_id,
+                            update_fields=sorted(update_payload.keys()),
+                            task_id=task_id,
+                        ).debug("Applying enrichment update payload")
                         updated_job = await job_repository.update(
                             existing_job.id, update_payload
                         )
@@ -494,6 +505,14 @@ async def _run_scrape_and_persist(
                             updated_count += 1
                         continue
 
+                    logger.bind(
+                        operation="run_scrape_and_persist",
+                        platform=platform,
+                        external_id=external_id,
+                        task_id=task_id,
+                    ).debug(
+                        "Skipping update because no meaningful enrichment values were found"
+                    )
                     duplicate_count += 1
                     continue
 

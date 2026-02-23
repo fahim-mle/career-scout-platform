@@ -2,7 +2,77 @@
 
 from __future__ import annotations
 
+import pytest
+from typing import Any, cast
+
 from src.scrapers.indeed import IndeedScraper
+
+
+class _FakeElement:
+    """Minimal fake Playwright element for Indeed scraper unit tests."""
+
+    def __init__(
+        self,
+        *,
+        text: str = "",
+        outer_html: str = "",
+        raise_on_evaluate: bool = False,
+    ) -> None:
+        self._text = text
+        self._outer_html = outer_html
+        self._raise_on_evaluate = raise_on_evaluate
+
+    async def inner_text(self) -> str:
+        """Return fake element text payload."""
+        return self._text
+
+    async def evaluate(self, expression: str) -> str:
+        """Return fake outerHTML for the expected evaluate expression."""
+        if expression != "node => node.outerHTML":
+            raise ValueError("Unexpected expression")
+        if self._raise_on_evaluate:
+            raise RuntimeError("outerHTML unavailable")
+        return self._outer_html
+
+
+class _FakeClickableElement(_FakeElement):
+    """Fake element that tracks click calls for popup tests."""
+
+    def __init__(self, *, raise_on_click: bool = False) -> None:
+        super().__init__()
+        self.raise_on_click = raise_on_click
+        self.click_calls = 0
+
+    async def click(self, timeout: int) -> None:
+        """Record click calls and optionally raise to simulate popup failures."""
+        del timeout
+        self.click_calls += 1
+        if self.raise_on_click:
+            raise RuntimeError("popup close failed")
+
+
+class _FakePage:
+    """Minimal fake Playwright page for selector extraction tests."""
+
+    def __init__(
+        self,
+        elements: dict[str, _FakeElement],
+        elements_all: dict[str, list[_FakeElement]] | None = None,
+    ) -> None:
+        self._elements = elements
+        self._elements_all = elements_all or {}
+
+    async def goto(self, url: str, wait_until: str) -> None:
+        """Simulate page navigation call for scrape_job_details."""
+        del url, wait_until
+
+    async def query_selector(self, selector: str) -> _FakeElement | None:
+        """Return mapped fake element for selector or ``None``."""
+        return self._elements.get(selector)
+
+    async def query_selector_all(self, selector: str) -> list[_FakeElement]:
+        """Return mapped fake element list for selector or empty list."""
+        return self._elements_all.get(selector, [])
 
 
 def test_extract_external_id_prefers_data_jk() -> None:
@@ -53,3 +123,218 @@ def test_extract_job_type_from_text_detects_contract() -> None:
     result = IndeedScraper._extract_job_type_from_text("Salary: $80/hr - Contract role")
 
     assert result == "Contract"
+
+
+@pytest.mark.asyncio
+async def test_scrape_job_details_extracts_full_metadata_payload() -> None:
+    """Detail scraping should include all requested metadata keys when present."""
+    html_block = '<div id="jobDescriptionText"><p>Build robust APIs</p></div>'
+    scraper = IndeedScraper()
+    scraper.page = cast(
+        Any,
+        _FakePage(
+            elements={
+                "#jobDescriptionText": _FakeElement(
+                    text="Build robust APIs", outer_html=html_block
+                ),
+                "#salaryInfoAndJobType": _FakeElement(
+                    text="$120k - $150k per year · Full-time"
+                ),
+                '[data-testid="job-location"]': _FakeElement(text="Sydney NSW"),
+                '[data-testid="jobsearch-JobMetadataFooter"]': _FakeElement(
+                    text="Posted 2 days ago"
+                ),
+                '[data-testid="company-rating"]': _FakeElement(text="4.2/5"),
+            },
+            elements_all={
+                '[data-testid="benefitItem"]': [
+                    _FakeElement(text="Health insurance"),
+                    _FakeElement(text="Work from home"),
+                    _FakeElement(text="Health insurance"),
+                ]
+            },
+        ),
+    )
+
+    async def noop_rate_limit(seconds: float | None = None) -> None:
+        del seconds
+
+    scraper.rate_limit = noop_rate_limit  # type: ignore[method-assign]
+
+    details = await scraper.scrape_job_details("https://au.indeed.com/viewjob?jk=abc")
+
+    assert details["description_full"] == "Build robust APIs"
+    assert details["description_short"] == "Build robust APIs"
+    assert details["scraped_jobs"] == html_block
+    assert details["metadata"] == {
+        "platform": "indeed",
+        "location": "Sydney NSW",
+        "date_posted": "Posted 2 days ago",
+        "work_type": "Full-Time",
+        "salary_text": "$120k - $150k per year · Full-time",
+        "company_rating": "4.2/5",
+        "benefits": ["Health insurance", "Work from home"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_scrape_job_details_sets_scraped_jobs_none_when_html_missing() -> None:
+    """Detail scraping should keep running when raw HTML cannot be extracted."""
+    scraper = IndeedScraper()
+    scraper.page = cast(
+        Any,
+        _FakePage(
+            elements={
+                "#jobDescriptionText": _FakeElement(
+                    text="Text extraction still works",
+                    raise_on_evaluate=True,
+                )
+            }
+        ),
+    )
+
+    async def noop_rate_limit(seconds: float | None = None) -> None:
+        del seconds
+
+    scraper.rate_limit = noop_rate_limit  # type: ignore[method-assign]
+
+    details = await scraper.scrape_job_details("https://au.indeed.com/viewjob?jk=abc")
+
+    assert details["description_full"] == "Text extraction still works"
+    assert details["description_short"] == "Text extraction still works"
+    assert details["scraped_jobs"] is None
+    assert details["metadata"] == {"platform": "indeed"}
+
+
+@pytest.mark.asyncio
+async def test_scrape_job_details_extracts_raw_html_from_fallback_selector() -> None:
+    """Detail scraping should use fallback selectors when primary HTML selectors miss."""
+    fallback_html = "<main><section><p>Fallback indeed details</p></section></main>"
+    scraper = IndeedScraper()
+    scraper.page = cast(
+        Any,
+        _FakePage(
+            elements={
+                "main": _FakeElement(
+                    text="Fallback indeed details",
+                    outer_html=fallback_html,
+                )
+            }
+        ),
+    )
+
+    async def noop_rate_limit(seconds: float | None = None) -> None:
+        del seconds
+
+    scraper.rate_limit = noop_rate_limit  # type: ignore[method-assign]
+
+    details = await scraper.scrape_job_details(
+        "https://au.indeed.com/viewjob?jk=fallback"
+    )
+
+    assert details["description_full"] == "Fallback indeed details"
+    assert details["scraped_jobs"] == fallback_html
+    assert details["metadata"] == {"platform": "indeed"}
+
+
+@pytest.mark.asyncio
+async def test_scrape_job_details_extracts_sparse_metadata_payload() -> None:
+    """Detail scraping should include only metadata keys available in page markup."""
+    scraper = IndeedScraper()
+    scraper.page = cast(
+        Any,
+        _FakePage(
+            elements={
+                "#jobDescriptionText": _FakeElement(text="Minimal metadata page"),
+                '[data-testid="jobsearch-JobMetadataFooter"]': _FakeElement(
+                    text="Posted today"
+                ),
+            }
+        ),
+    )
+
+    async def noop_rate_limit(seconds: float | None = None) -> None:
+        del seconds
+
+    scraper.rate_limit = noop_rate_limit  # type: ignore[method-assign]
+
+    details = await scraper.scrape_job_details("https://au.indeed.com/viewjob?jk=abc")
+
+    assert details["metadata"] == {
+        "platform": "indeed",
+        "date_posted": "Posted today",
+    }
+
+
+@pytest.mark.asyncio
+async def test_scrape_job_details_handles_popup_close_failure_and_partial_dom() -> None:
+    """Detail scraping should continue metadata extraction even if popup close fails."""
+    close_button = _FakeClickableElement(raise_on_click=True)
+    scraper = IndeedScraper()
+    scraper.page = cast(
+        Any,
+        _FakePage(
+            elements={
+                'button[aria-label="Close"]': close_button,
+                "#jobDescriptionText": _FakeElement(text="Role details"),
+                '[data-testid="job-location"]': _FakeElement(text="Melbourne VIC"),
+            }
+        ),
+    )
+
+    async def noop_rate_limit(seconds: float | None = None) -> None:
+        del seconds
+
+    scraper.rate_limit = noop_rate_limit  # type: ignore[method-assign]
+
+    details = await scraper.scrape_job_details("https://au.indeed.com/viewjob?jk=popup")
+
+    assert close_button.click_calls == 1
+    assert details["description_full"] == "Role details"
+    assert details["metadata"] == {
+        "platform": "indeed",
+        "location": "Melbourne VIC",
+    }
+
+
+@pytest.mark.asyncio
+async def test_scrape_job_details_keeps_core_fields_behavior() -> None:
+    """Detail scraping should preserve core field extraction behavior."""
+    long_text = " ".join(["indeed"] * 200)
+    scraper = IndeedScraper()
+    scraper.page = cast(
+        Any,
+        _FakePage(
+            elements={
+                "#jobDescriptionText": _FakeElement(
+                    text=long_text,
+                    outer_html='<div id="jobDescriptionText"><p>indeed</p></div>',
+                ),
+                "#salaryInfoAndJobType": _FakeElement(
+                    text="$100k - $130k per year · Contract"
+                ),
+            }
+        ),
+    )
+
+    async def noop_rate_limit(seconds: float | None = None) -> None:
+        del seconds
+
+    scraper.rate_limit = noop_rate_limit  # type: ignore[method-assign]
+
+    details = await scraper.scrape_job_details("https://au.indeed.com/viewjob?jk=abc")
+
+    assert details["description_full"] == long_text
+    assert details["description_short"] is not None
+    assert details["description_short"].endswith("...")
+    assert (
+        len(details["description_short"])
+        <= IndeedScraper.SHORT_DESCRIPTION_MAX_LENGTH + 3
+    )
+    assert details["salary_range"] == {
+        "min": 100000,
+        "max": 130000,
+        "currency": "AUD",
+        "raw": "$100k - $130k per year · Contract",
+    }
+    assert details["job_type"] == "Contract"
