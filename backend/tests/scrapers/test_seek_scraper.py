@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import pytest
 from typing import Any, cast
 
@@ -17,10 +18,14 @@ class _FakeElement:
         text: str = "",
         outer_html: str = "",
         raise_on_evaluate: bool = False,
+        attributes: dict[str, str] | None = None,
+        children: dict[str, "_FakeElement"] | None = None,
     ) -> None:
         self._text = text
         self._outer_html = outer_html
         self._raise_on_evaluate = raise_on_evaluate
+        self._attributes = attributes or {}
+        self._children = children or {}
 
     async def inner_text(self) -> str:
         """Return fake element text payload."""
@@ -33,6 +38,14 @@ class _FakeElement:
         if self._raise_on_evaluate:
             raise RuntimeError("outerHTML unavailable")
         return self._outer_html
+
+    async def get_attribute(self, name: str) -> str | None:
+        """Return fake attribute values for parser tests."""
+        return self._attributes.get(name)
+
+    async def query_selector(self, selector: str) -> _FakeElement | None:
+        """Return fake child element for selector fallback tests."""
+        return self._children.get(selector)
 
 
 class _FakePage:
@@ -81,6 +94,56 @@ def test_parse_salary_number_supports_k_notation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_parse_job_card_extracts_key_fields() -> None:
+    """Card parser should return normalized Seek payload fields."""
+    scraper = SeekScraper()
+    card = _FakeElement(
+        children={
+            'a[data-automation="jobTitle"]': _FakeElement(
+                text="Senior Backend Engineer",
+                attributes={"href": "/job/81234567"},
+            ),
+            'a[data-automation="jobCompany"]': _FakeElement(text="Career Scout"),
+            'a[data-automation="jobLocation"]': _FakeElement(text="Brisbane QLD"),
+            'span[data-automation="jobShortDescription"]': _FakeElement(
+                text="Build and operate backend services"
+            ),
+        }
+    )
+
+    payload = await scraper._parse_job_card(card=cast(Any, card))
+
+    assert payload is not None
+    assert payload["external_id"] == "81234567"
+    assert payload["platform"] == "seek"
+    assert payload["url"] == "https://www.seek.com.au/job/81234567"
+    assert payload["title"] == "Senior Backend Engineer"
+    assert payload["company"] == "Career Scout"
+    assert payload["location"] == "Brisbane QLD"
+    assert payload["description_short"] == "Build and operate backend services"
+    assert isinstance(payload["scraped_at"], datetime)
+
+
+@pytest.mark.asyncio
+async def test_parse_job_card_returns_none_when_required_field_missing() -> None:
+    """Card parser should skip cards missing required Seek fields."""
+    scraper = SeekScraper()
+    card = _FakeElement(
+        children={
+            'a[data-automation="jobTitle"]': _FakeElement(
+                text="Senior Backend Engineer",
+                attributes={"href": "/job/81234567"},
+            ),
+            'a[data-automation="jobCompany"]': _FakeElement(text="Career Scout"),
+        }
+    )
+
+    payload = await scraper._parse_job_card(card=cast(Any, card))
+
+    assert payload is None
+
+
+@pytest.mark.asyncio
 async def test_scrape_job_details_extracts_raw_description_html() -> None:
     """Detail scraping should include raw description HTML in scraped_jobs."""
     html_block = '<div data-automation="jobAdDetails"><p>Build APIs</p></div>'
@@ -103,6 +166,9 @@ async def test_scrape_job_details_extracts_raw_description_html() -> None:
 
     details = await scraper.scrape_job_details("https://www.seek.com.au/job/81234567")
 
+    assert {"description_full", "description_short", "scraped_jobs", "metadata"} <= set(
+        details.keys()
+    )
     assert details["description_full"] == "Build APIs with FastAPI"
     assert details["description_short"] == "Build APIs with FastAPI"
     assert details["scraped_jobs"] == html_block

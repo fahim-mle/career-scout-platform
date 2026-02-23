@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import pytest
 from typing import Any, cast
 
@@ -17,10 +18,14 @@ class _FakeElement:
         text: str = "",
         outer_html: str = "",
         raise_on_evaluate: bool = False,
+        attributes: dict[str, str] | None = None,
+        children: dict[str, "_FakeElement"] | None = None,
     ) -> None:
         self._text = text
         self._outer_html = outer_html
         self._raise_on_evaluate = raise_on_evaluate
+        self._attributes = attributes or {}
+        self._children = children or {}
 
     async def inner_text(self) -> str:
         """Return fake element text payload."""
@@ -33,6 +38,14 @@ class _FakeElement:
         if self._raise_on_evaluate:
             raise RuntimeError("outerHTML unavailable")
         return self._outer_html
+
+    async def get_attribute(self, name: str) -> str | None:
+        """Return fake attribute value for card parsing tests."""
+        return self._attributes.get(name)
+
+    async def query_selector(self, selector: str) -> _FakeElement | None:
+        """Return fake nested element for selector fallback chain."""
+        return self._children.get(selector)
 
 
 class _FakeClickableElement(_FakeElement):
@@ -126,6 +139,58 @@ def test_extract_job_type_from_text_detects_contract() -> None:
 
 
 @pytest.mark.asyncio
+async def test_parse_job_card_extracts_key_fields() -> None:
+    """Card parser should return normalized Indeed key fields."""
+    scraper = IndeedScraper()
+    card = _FakeElement(
+        attributes={"data-jk": "abc123"},
+        children={
+            "h2.jobTitle a": _FakeElement(
+                text="Backend Engineer",
+                attributes={"href": "/viewjob?jk=abc123", "data-jk": "abc123"},
+            ),
+            '[data-testid="company-name"]': _FakeElement(text="Career Scout"),
+            '[data-testid="job-location"]': _FakeElement(text="Melbourne VIC"),
+            '[data-testid="jobsnippet_footer"]': _FakeElement(
+                text="Work with Python and FastAPI"
+            ),
+        },
+    )
+
+    payload = await scraper._parse_job_card(card=cast(Any, card))
+
+    assert payload is not None
+    assert payload["external_id"] == "abc123"
+    assert payload["platform"] == "indeed"
+    assert payload["url"] == "https://au.indeed.com/viewjob?jk=abc123"
+    assert payload["title"] == "Backend Engineer"
+    assert payload["company"] == "Career Scout"
+    assert payload["location"] == "Melbourne VIC"
+    assert payload["description_short"] == "Work with Python and FastAPI"
+    assert isinstance(payload["scraped_at"], datetime)
+
+
+@pytest.mark.asyncio
+async def test_parse_job_card_returns_none_when_required_field_missing() -> None:
+    """Card parser should skip cards missing required Indeed fields."""
+    scraper = IndeedScraper()
+    card = _FakeElement(
+        attributes={"data-jk": "abc123"},
+        children={
+            "h2.jobTitle a": _FakeElement(
+                text="Backend Engineer",
+                attributes={"href": "/viewjob?jk=abc123", "data-jk": "abc123"},
+            ),
+            '[data-testid="company-name"]': _FakeElement(text="Career Scout"),
+        },
+    )
+
+    payload = await scraper._parse_job_card(card=cast(Any, card))
+
+    assert payload is None
+
+
+@pytest.mark.asyncio
 async def test_scrape_job_details_extracts_full_metadata_payload() -> None:
     """Detail scraping should include all requested metadata keys when present."""
     html_block = '<div id="jobDescriptionText"><p>Build robust APIs</p></div>'
@@ -163,6 +228,9 @@ async def test_scrape_job_details_extracts_full_metadata_payload() -> None:
 
     details = await scraper.scrape_job_details("https://au.indeed.com/viewjob?jk=abc")
 
+    assert {"description_full", "description_short", "scraped_jobs", "metadata"} <= set(
+        details.keys()
+    )
     assert details["description_full"] == "Build robust APIs"
     assert details["description_short"] == "Build robust APIs"
     assert details["scraped_jobs"] == html_block
@@ -178,8 +246,8 @@ async def test_scrape_job_details_extracts_full_metadata_payload() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scrape_job_details_sets_scraped_jobs_none_when_html_missing() -> None:
-    """Detail scraping should keep running when raw HTML cannot be extracted."""
+async def test_scrape_job_details_omits_scraped_jobs_when_html_missing() -> None:
+    """Detail scraping should omit raw HTML key when extraction misses."""
     scraper = IndeedScraper()
     scraper.page = cast(
         Any,
@@ -202,7 +270,7 @@ async def test_scrape_job_details_sets_scraped_jobs_none_when_html_missing() -> 
 
     assert details["description_full"] == "Text extraction still works"
     assert details["description_short"] == "Text extraction still works"
-    assert details["scraped_jobs"] is None
+    assert "scraped_jobs" not in details
     assert details["metadata"] == {"platform": "indeed"}
 
 

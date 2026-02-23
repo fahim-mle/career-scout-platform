@@ -22,9 +22,20 @@ make test
 make test-cov
 make test-fast
 make test-verbose
+make test-refactor-safety
 ```
 
-Coverage is enforced at a minimum of 80%.
+`make test-refactor-safety` runs the scraper refactor safety matrix:
+
+- `tests/scrapers/test_linkedin_scraper.py`
+- `tests/scrapers/test_seek_scraper.py`
+- `tests/scrapers/test_indeed_scraper.py`
+- `tests/tasks/test_scraper_tasks.py`
+- `tests/api/test_jobs.py`
+
+`make test-refactor-safety` is intentionally functional-only for fast refactor feedback.
+
+Coverage is enforced at a minimum of 80% by `make test-cov`.
 
 After `make test-cov`, open the HTML coverage report:
 
