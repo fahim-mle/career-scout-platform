@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from loguru import logger
+
 
 class IndeedMetadataParsingMixin:
     """Metadata extraction behavior for Indeed detail pages."""
@@ -37,15 +39,9 @@ class IndeedMetadataParsingMixin:
         if date_posted_text:
             metadata["date_posted"] = date_posted_text
 
-        work_type = job_type
-        if not work_type and salary_type_text:
-            work_type = self._extract_job_type_from_text(salary_type_text)
-        if not work_type:
-            work_type_text = await self._extract_text_from_page_selectors(
-                selectors=self.HEADER_JOB_TYPE_SELECTORS
-            )
-            if work_type_text:
-                work_type = self._extract_job_type_from_text(work_type_text)
+        work_type = job_type or await self._extract_job_type(
+            salary_type_text=salary_type_text
+        )
         if work_type:
             metadata["work_type"] = work_type
 
@@ -131,7 +127,12 @@ class IndeedMetadataParsingMixin:
             for element in elements:
                 try:
                     text_value = await element.inner_text()
-                except Exception:
+                except Exception as exc:
+                    logger.bind(
+                        scraper=self.__class__.__name__,
+                        selector=selector,
+                        error=str(exc),
+                    ).debug("Ignoring Indeed benefit extraction failure")
                     continue
                 normalized = self._normalize_text(text_value)
                 if normalized:

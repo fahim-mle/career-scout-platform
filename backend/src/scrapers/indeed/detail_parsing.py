@@ -61,6 +61,7 @@ class IndeedDetailParsingMixin:
         details: dict[str, Any] = {}
         if description_full:
             details["description_full"] = description_full
+        if description_short:
             details["description_short"] = description_short
         details["scraped_jobs"] = raw_description_html
 
@@ -139,7 +140,12 @@ class IndeedDetailParsingMixin:
                     "Closed Indeed popup element"
                 )
                 return
-            except Exception:
+            except Exception as exc:
+                logger.bind(
+                    scraper=self.__class__.__name__,
+                    selector=selector,
+                    error=str(exc),
+                ).debug("Ignoring Indeed popup close failure")
                 continue
 
     async def _extract_text_from_page_selectors(

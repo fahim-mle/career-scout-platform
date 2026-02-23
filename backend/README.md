@@ -33,7 +33,9 @@ make test-refactor-safety
 - `tests/tasks/test_scraper_tasks.py`
 - `tests/api/test_jobs.py`
 
-Coverage is enforced at a minimum of 80%.
+`make test-refactor-safety` is intentionally functional-only for fast refactor feedback.
+
+Coverage is enforced at a minimum of 80% by `make test-cov`.
 
 After `make test-cov`, open the HTML coverage report:
 

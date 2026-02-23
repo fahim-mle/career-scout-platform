@@ -14,6 +14,7 @@ test-fast:
 test-verbose:
 	$(PYTEST) -v
 
+# Intentional: fast functional safety matrix (no coverage gate).
 test-refactor-safety:
 	$(PYTEST) -v tests/scrapers/test_linkedin_scraper.py tests/scrapers/test_seek_scraper.py tests/scrapers/test_indeed_scraper.py tests/tasks/test_scraper_tasks.py tests/api/test_jobs.py
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from src.scrapers.common.text import normalize_whitespace
 from src.scrapers.linkedin.constants import PLATFORM
 
 
@@ -35,9 +36,7 @@ def normalize_metadata_text(value: str | None) -> str | None:
     """
     if value is None:
         return None
-
-    compact = re.sub(r"\s+", " ", value).strip()
-    return compact or None
+    return normalize_whitespace(value)
 
 
 def looks_like_relative_date(value: str) -> bool:

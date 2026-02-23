@@ -144,7 +144,12 @@ class LinkedInDetailParsingMixin:
             try:
                 await button.click(timeout=2_500)
                 return
-            except Exception:
+            except Exception as exc:
+                logger.bind(
+                    scraper=self.__class__.__name__,
+                    selector=selector,
+                    error=str(exc),
+                ).debug("Ignoring LinkedIn description expand failure")
                 continue
 
     async def _extract_text_from_page_selectors(

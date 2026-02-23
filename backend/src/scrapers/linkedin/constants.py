@@ -1,7 +1,5 @@
 """LinkedIn scraper constants and selector fallbacks."""
 
-from __future__ import annotations
-
 import re
 
 BASE_URL = "https://www.linkedin.com"

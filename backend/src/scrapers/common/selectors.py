@@ -44,6 +44,12 @@ async def extract_text_from_page_selectors(
 
     Returns:
         Normalized text when found, otherwise ``None``.
+
+    Notes:
+        This helper intentionally only suppresses timeout-like errors. Unexpected
+        selector errors are allowed to bubble so text extraction regressions are
+        visible during scraping and tests. The HTML helper is more permissive
+        because it runs as a best-effort enrichment path.
     """
     for selector in selectors:
         element = await page.query_selector(selector)
@@ -54,7 +60,10 @@ async def extract_text_from_page_selectors(
             normalized = normalize_text(raw_text)
             if normalized:
                 return normalized
-        except timeout_errors:
+        except timeout_errors as exc:
+            logger.bind(selector=selector, error=str(exc)).debug(
+                "Text extraction selector timed out"
+            )
             continue
     return None
 
