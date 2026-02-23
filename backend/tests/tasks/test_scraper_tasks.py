@@ -1641,6 +1641,73 @@ def test_run_indeed_scrape_and_persist_skips_empty_values_for_non_empty_existing
     assert update_called is False
 
 
+def test_run_indeed_scrape_and_persist_does_not_overwrite_non_empty_existing_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Indeed update path should not overwrite already populated enrichment fields."""
+    fake_scraped_jobs = [
+        {
+            "external_id": "indeed-existing-3",
+            "platform": "indeed",
+            "scraped_jobs": '<div id="jobDescriptionText">New details</div>',
+            "metadata": {
+                "platform": "indeed",
+                "date_posted": "Posted today",
+            },
+        }
+    ]
+
+    update_called = False
+
+    class FakeJobRepository:
+        def __init__(self, db_session: Any) -> None:
+            self.db_session = db_session
+
+        async def get_by_external_id(self, external_id: str, platform: str) -> Any:
+            del external_id, platform
+            return SimpleNamespace(
+                id=606,
+                title="Backend Engineer",
+                description_full="existing full",
+                description_short="existing short",
+                job_type="Full-Time",
+                scraped_jobs='<div id="jobDescriptionText">Existing details</div>',
+                platform_metadata={"platform": "indeed", "date_posted": "Yesterday"},
+            )
+
+        async def create(self, payload: dict[str, Any]) -> Any:
+            del payload
+            raise AssertionError("create should not be called in update path")
+
+        async def update(self, job_id: int, payload: dict[str, Any]) -> Any:
+            del job_id, payload
+            nonlocal update_called
+            update_called = True
+            raise AssertionError("update should not be called for populated fields")
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "IndeedScraper",
+        make_scraper_double(fake_scraped_jobs, class_name="FakeIndeedScraper"),
+    )
+    monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
+    monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
+
+    result = asyncio.run(
+        scraper_tasks._run_indeed_scrape_and_persist(
+            query="python",
+            location="brisbane",
+            limit=3,
+            task_id="task-89",
+        )
+    )
+
+    assert result["created"] == 0
+    assert result["updated"] == 0
+    assert result["duplicates"] == 1
+    assert update_called is False
+
+
 def test_run_linkedin_scrape_and_persist_does_not_count_none_updates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

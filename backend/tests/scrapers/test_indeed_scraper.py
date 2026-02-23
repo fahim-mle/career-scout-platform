@@ -35,6 +35,22 @@ class _FakeElement:
         return self._outer_html
 
 
+class _FakeClickableElement(_FakeElement):
+    """Fake element that tracks click calls for popup tests."""
+
+    def __init__(self, *, raise_on_click: bool = False) -> None:
+        super().__init__()
+        self.raise_on_click = raise_on_click
+        self.click_calls = 0
+
+    async def click(self, timeout: int) -> None:
+        """Record click calls and optionally raise to simulate popup failures."""
+        del timeout
+        self.click_calls += 1
+        if self.raise_on_click:
+            raise RuntimeError("popup close failed")
+
+
 class _FakePage:
     """Minimal fake Playwright page for selector extraction tests."""
 
@@ -191,6 +207,37 @@ async def test_scrape_job_details_sets_scraped_jobs_none_when_html_missing() -> 
 
 
 @pytest.mark.asyncio
+async def test_scrape_job_details_extracts_raw_html_from_fallback_selector() -> None:
+    """Detail scraping should use fallback selectors when primary HTML selectors miss."""
+    fallback_html = "<main><section><p>Fallback indeed details</p></section></main>"
+    scraper = IndeedScraper()
+    scraper.page = cast(
+        Any,
+        _FakePage(
+            elements={
+                "main": _FakeElement(
+                    text="Fallback indeed details",
+                    outer_html=fallback_html,
+                )
+            }
+        ),
+    )
+
+    async def noop_rate_limit(seconds: float | None = None) -> None:
+        del seconds
+
+    scraper.rate_limit = noop_rate_limit  # type: ignore[method-assign]
+
+    details = await scraper.scrape_job_details(
+        "https://au.indeed.com/viewjob?jk=fallback"
+    )
+
+    assert details["description_full"] == "Fallback indeed details"
+    assert details["scraped_jobs"] == fallback_html
+    assert details["metadata"] == {"platform": "indeed"}
+
+
+@pytest.mark.asyncio
 async def test_scrape_job_details_extracts_sparse_metadata_payload() -> None:
     """Detail scraping should include only metadata keys available in page markup."""
     scraper = IndeedScraper()
@@ -216,6 +263,37 @@ async def test_scrape_job_details_extracts_sparse_metadata_payload() -> None:
     assert details["metadata"] == {
         "platform": "indeed",
         "date_posted": "Posted today",
+    }
+
+
+@pytest.mark.asyncio
+async def test_scrape_job_details_handles_popup_close_failure_and_partial_dom() -> None:
+    """Detail scraping should continue metadata extraction even if popup close fails."""
+    close_button = _FakeClickableElement(raise_on_click=True)
+    scraper = IndeedScraper()
+    scraper.page = cast(
+        Any,
+        _FakePage(
+            elements={
+                'button[aria-label="Close"]': close_button,
+                "#jobDescriptionText": _FakeElement(text="Role details"),
+                '[data-testid="job-location"]': _FakeElement(text="Melbourne VIC"),
+            }
+        ),
+    )
+
+    async def noop_rate_limit(seconds: float | None = None) -> None:
+        del seconds
+
+    scraper.rate_limit = noop_rate_limit  # type: ignore[method-assign]
+
+    details = await scraper.scrape_job_details("https://au.indeed.com/viewjob?jk=popup")
+
+    assert close_button.click_calls == 1
+    assert details["description_full"] == "Role details"
+    assert details["metadata"] == {
+        "platform": "indeed",
+        "location": "Melbourne VIC",
     }
 
 
