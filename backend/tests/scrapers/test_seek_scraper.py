@@ -227,6 +227,80 @@ async def test_scrape_job_details_extracts_partial_seek_metadata() -> None:
 
 
 @pytest.mark.asyncio
+async def test_scrape_job_details_uses_fallback_selector_for_raw_html() -> None:
+    """Detail scraping should fall back to generic selectors for raw HTML extraction."""
+    fallback_html = "<main><section><p>Fallback role details</p></section></main>"
+    scraper = SeekScraper()
+    scraper.page = cast(
+        Any,
+        _FakePage(
+            elements={
+                'div[data-automation="jobAdDetails"]': _FakeElement(
+                    text="Fallback role details"
+                ),
+                "main": _FakeElement(outer_html=fallback_html),
+            }
+        ),
+    )
+
+    async def noop_rate_limit(seconds: float | None = None) -> None:
+        del seconds
+
+    scraper.rate_limit = noop_rate_limit  # type: ignore[method-assign]
+
+    details = await scraper.scrape_job_details("https://www.seek.com.au/job/81234567")
+
+    assert details["description_full"] == "Fallback role details"
+    assert details["scraped_jobs"] == fallback_html
+    assert details["metadata"] == {"platform": "seek"}
+
+
+@pytest.mark.asyncio
+async def test_scrape_job_details_extracts_metadata_from_alternate_selectors() -> None:
+    """Detail scraping should support Seek metadata selector variants."""
+    scraper = SeekScraper()
+    scraper.page = cast(
+        Any,
+        _FakePage(
+            elements={
+                'div[data-automation="job-description"]': _FakeElement(
+                    text="Variant detail body",
+                    outer_html='<div data-automation="job-description">Variant detail body</div>',
+                ),
+                '*[data-automation="jobDetailWorkType"]': _FakeElement(text="Contract"),
+                '*[data-automation="jobDetailLocation"]': _FakeElement(
+                    text="Melbourne VIC"
+                ),
+                '*[data-automation="jobDetailDate"]': _FakeElement(text="Posted today"),
+                '*[data-automation="jobClassifications"]': _FakeElement(
+                    text="Engineering - Platform"
+                ),
+                '*[data-automation="jobSalary"]': _FakeElement(text="$150k - $160k"),
+            }
+        ),
+    )
+
+    async def noop_rate_limit(seconds: float | None = None) -> None:
+        del seconds
+
+    scraper.rate_limit = noop_rate_limit  # type: ignore[method-assign]
+
+    details = await scraper.scrape_job_details("https://www.seek.com.au/job/81234567")
+
+    assert details["job_type"] == "Contract"
+    assert details["location"] == "Melbourne VIC"
+    assert details["metadata"] == {
+        "platform": "seek",
+        "location": "Melbourne VIC",
+        "date_posted": "Posted today",
+        "work_type": "Contract",
+        "classification": "Engineering",
+        "subclassification": "Platform",
+        "salary_text": "$150k - $160k",
+    }
+
+
+@pytest.mark.asyncio
 async def test_scrape_job_details_keeps_existing_text_behavior() -> None:
     """Detail scraping should preserve existing description truncation behavior."""
     long_text = " ".join(["seek"] * 200)
