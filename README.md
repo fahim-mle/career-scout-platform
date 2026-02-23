@@ -56,6 +56,8 @@ Use `bash scripts/generate-secrets.sh --force` to overwrite existing files in `s
 docker compose up -d --build
 ```
 
+On backend startup, Alembic migrations are applied automatically before Uvicorn starts.
+
 For faster UI iteration (without waiting on full health dependency chains), you can start only core services for frontend work:
 
 ```bash

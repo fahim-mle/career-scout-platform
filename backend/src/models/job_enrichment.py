@@ -70,6 +70,9 @@ class JobEnrichment(BaseModel):
     confidence_by_field: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True
     )
+    description_sections: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONB, nullable=True
+    )
     enriched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -120,6 +123,50 @@ class JobEnrichment(BaseModel):
             return value
         if not isinstance(value, dict):
             raise ValueError("confidence_by_field must be an object")
+        return value
+
+    @validates("description_sections")
+    def validate_description_sections(
+        self,
+        key: str,
+        value: list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]] | None:
+        """Validate description section payload shape.
+
+        Args:
+            key: SQLAlchemy attribute key.
+            value: Description sections payload.
+
+        Returns:
+            The original payload when valid.
+
+        Raises:
+            ValueError: If payload is not a list of {title, items} objects.
+        """
+        if value is None:
+            return value
+        if not isinstance(value, list):
+            raise ValueError("description_sections must be a list")
+
+        for section in value:
+            if not isinstance(section, dict):
+                raise ValueError("description_sections entries must be objects")
+
+            title = section.get("title")
+            items = section.get("items")
+            if not isinstance(title, str) or not title.strip():
+                raise ValueError(
+                    "description_sections.title must be a non-empty string"
+                )
+            if (
+                not isinstance(items, list)
+                or not items
+                or any(not isinstance(item, str) or not item.strip() for item in items)
+            ):
+                raise ValueError(
+                    "description_sections.items must be a list of non-empty strings"
+                )
+
         return value
 
 

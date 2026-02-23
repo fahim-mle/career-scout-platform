@@ -16,6 +16,7 @@ from src.core.exceptions import (
     RepositoryError,
 )
 from src.core.metrics import increment_jobs_created
+from src.core.title_normalization import normalize_job_title, title_preview_for_log
 from src.models.job import ALLOWED_PLATFORMS, Job
 from src.repositories.job_enrichment import JobEnrichmentRepository
 from src.repositories.job import JobRepository
@@ -316,6 +317,8 @@ class JobService:
         try:
             job_data = payload.model_dump(mode="python", exclude_unset=True)
             job_data["url"] = str(payload.url)
+            self._map_platform_metadata_field(job_data)
+            self._normalize_title_for_persistence(job_data, log=log)
             job = await self.repo.create(job_data)
         except DuplicateJobError as exc:
             log.bind(error=str(exc)).warning("Duplicate job on create")
@@ -381,6 +384,8 @@ class JobService:
             update_data["url"] = str(update_data["url"])
             self._validate_url_for_platform(str(update_data["url"]), existing.platform)
 
+        self._map_platform_metadata_field(update_data)
+        self._normalize_title_for_persistence(update_data, log=log)
         self._validate_description_growth(existing=existing, updates=update_data)
 
         try:
@@ -536,6 +541,56 @@ class JobService:
                     f"{field_name} updates must be longer than the existing value."
                 )
 
+    def _normalize_title_for_persistence(
+        self,
+        payload: dict[str, object],
+        *,
+        log: Any,
+    ) -> None:
+        """Normalize duplicated title artifacts before repository writes.
+
+        Args:
+            payload: Mutable create/update payload.
+            log: Bound structured logger.
+
+        Returns:
+            None.
+        """
+        if "title" not in payload:
+            return
+
+        raw_title = payload.get("title")
+        if raw_title is None or not isinstance(raw_title, str):
+            return
+
+        normalized_title = normalize_job_title(raw_title)
+        if normalized_title is None:
+            return
+
+        payload["title"] = normalized_title
+        if normalized_title != raw_title:
+            log.bind(
+                normalization="adjacent_duplicate_phrase",
+                changed=True,
+                title_raw=title_preview_for_log(raw_title),
+                title_normalized=title_preview_for_log(normalized_title),
+            ).info("Normalized job title before persistence")
+
+    @staticmethod
+    def _map_platform_metadata_field(payload: dict[str, object]) -> None:
+        """Map API-facing ``metadata`` field to ORM ``platform_metadata``.
+
+        Args:
+            payload: Mutable create/update payload.
+
+        Returns:
+            None.
+        """
+        if "metadata" not in payload:
+            return
+
+        payload["platform_metadata"] = payload.pop("metadata")
+
     @staticmethod
     def _domain_matches(hostname: str, expected: str) -> bool:
         """Check whether hostname matches expected root domain.
@@ -645,6 +700,7 @@ class JobService:
             enrichment_updated_at=self._as_datetime(
                 getattr(enrichment, "enriched_at", None)
             ),
+            description_sections=getattr(enrichment, "description_sections", None),
             relevance_score=raw_job.relevance_score,
         )
 

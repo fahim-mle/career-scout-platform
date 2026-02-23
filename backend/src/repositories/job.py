@@ -16,6 +16,8 @@ from src.repositories.base import BaseRepository
 
 PROTECTED_UPDATE_FIELDS = frozenset({"id", "created_at", "updated_at"})
 PROTECTED_CREATE_FIELDS = frozenset({"id", "created_at"})
+FIELD_ALIAS_MAP = {"platform_metadata": "platform_metadata"}
+UNSAFE_EXTERNAL_FIELDS = frozenset({"metadata"})
 
 
 class JobRepository(BaseRepository[Job]):
@@ -28,7 +30,7 @@ class JobRepository(BaseRepository[Job]):
             db: Active asynchronous SQLAlchemy session.
         """
         super().__init__(db=db, model_type=Job)
-        self._column_names = {column.key for column in Job.__table__.columns}
+        self._model_fields = {column.key for column in Job.__mapper__.column_attrs}
 
     async def get_by_id(self, job_id: int) -> Job | None:
         """Fetch a single job by primary key.
@@ -130,7 +132,8 @@ class JobRepository(BaseRepository[Job]):
             if invalid:
                 blocked = ", ".join(sorted(invalid))
                 raise ValueError(f"Cannot set protected fields: {blocked}")
-            job = Job(**job_data)
+            normalized_data = self._normalize_external_fields(job_data)
+            job = Job(**normalized_data)
             with db_query_timer(query_type="create"):
                 self.db.add(job)
                 created_job = await self._commit_and_refresh(job)
@@ -185,11 +188,10 @@ class JobRepository(BaseRepository[Job]):
             log.info("Job not found for update")
             return None
 
-        for field, value in job_data.items():
+        normalized_data = self._normalize_external_fields(job_data)
+        for field, value in normalized_data.items():
             if field in PROTECTED_UPDATE_FIELDS:
                 raise ValueError(f"Cannot update protected field: {field}")
-            if field.startswith("_") or field not in self._column_names:
-                raise ValueError(f"Unknown or unsafe update field: {field}")
             setattr(job, field, value)
 
         try:
@@ -212,6 +214,31 @@ class JobRepository(BaseRepository[Job]):
             await self._rollback_safely()
             log.bind(error=str(exc)).error("Database error during job update")
             raise RepositoryError("Failed to update job.") from exc
+
+    def _normalize_external_fields(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Normalize external payload keys into safe model attributes.
+
+        Args:
+            payload: External field-value mapping.
+
+        Returns:
+            Mapping with aliases resolved to ORM attribute names.
+
+        Raises:
+            ValueError: If payload contains unsafe or unknown fields.
+        """
+        normalized: dict[str, Any] = {}
+        for incoming_field, value in payload.items():
+            if incoming_field in UNSAFE_EXTERNAL_FIELDS:
+                raise ValueError(f"Unknown or unsafe update field: {incoming_field}")
+
+            field = FIELD_ALIAS_MAP.get(incoming_field, incoming_field)
+            if field.startswith("_") or field not in self._model_fields:
+                raise ValueError(f"Unknown or unsafe update field: {incoming_field}")
+
+            normalized[field] = value
+
+        return normalized
 
     async def delete(self, job_id: int) -> bool:
         """Delete an existing job record.

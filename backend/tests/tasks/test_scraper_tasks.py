@@ -40,6 +40,48 @@ class FakeBoundTask:
         raise RetryInvoked("retry called")
 
 
+class DummyAsyncSession:
+    """Trivial async-session placeholder for persistence unit tests."""
+
+
+class DummySessionContext:
+    """Async context manager yielding a dummy async DB session."""
+
+    async def __aenter__(self) -> Any:
+        return DummyAsyncSession()
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        del exc_type, exc, tb
+
+
+def make_linkedin_scraper_double(
+    scraped_jobs: list[dict[str, Any]],
+) -> type:
+    """Build a lightweight LinkedIn scraper double for a fixed payload."""
+
+    class FakeLinkedInScraper:
+        def __init__(self, headless: bool, rate_limit_seconds: float) -> None:
+            self.headless = headless
+            self.rate_limit_seconds = rate_limit_seconds
+
+        async def __aenter__(self) -> "FakeLinkedInScraper":
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            del exc_type, exc, tb
+
+        async def scrape_jobs(
+            self,
+            query: str,
+            location: str,
+            limit: int,
+        ) -> list[dict[str, Any]]:
+            del query, location, limit
+            return scraped_jobs
+
+    return FakeLinkedInScraper
+
+
 SCRAPE_TASK_RUN = scraper_tasks.scrape_linkedin_jobs.run.__func__  # type: ignore[attr-defined]
 SEEK_SCRAPE_TASK_RUN = scraper_tasks.scrape_seek_jobs.run.__func__  # type: ignore[attr-defined]
 SEEK_PROFILE_SET_TASK_RUN = scraper_tasks.scrape_seek_profile_set.run.__func__  # type: ignore[attr-defined]
@@ -373,6 +415,8 @@ def test_build_job_update_payload_only_sets_missing_fields() -> None:
         description_full="already set",
         description_short=None,
         job_type=None,
+        scraped_jobs=None,
+        platform_metadata=None,
     )
     scraped = {
         "description_full": "new full",
@@ -395,6 +439,8 @@ def test_build_job_update_payload_empty_when_no_new_values() -> None:
         description_full="full",
         description_short="short",
         job_type="Contract",
+        scraped_jobs="<div>already set</div>",
+        platform_metadata={"platform": "linkedin"},
     )
     scraped = {
         "description_full": "candidate",
@@ -403,6 +449,259 @@ def test_build_job_update_payload_empty_when_no_new_values() -> None:
     }
 
     result = scraper_tasks._build_job_update_payload(existing, scraped)
+    assert result == {}
+
+
+def test_build_job_update_payload_sets_missing_scraped_jobs_and_metadata() -> None:
+    """Update helper should enrich raw html and metadata when missing."""
+
+    existing = SimpleNamespace(
+        description_full="full",
+        description_short="short",
+        job_type="Contract",
+        scraped_jobs=None,
+        platform_metadata=None,
+    )
+    scraped = {
+        "scraped_jobs": '<div id="job-details">About the job</div>',
+        "platform_metadata": {"platform": "linkedin", "location": "Sydney"},
+    }
+
+    result = scraper_tasks._build_job_update_payload(existing, scraped)
+
+    assert result == {
+        "scraped_jobs": '<div id="job-details">About the job</div>',
+        "platform_metadata": {"platform": "linkedin", "location": "Sydney"},
+    }
+
+
+def test_normalize_scraped_payload_maps_metadata_to_platform_metadata() -> None:
+    """Normalizer should map generic metadata key for ORM compatibility."""
+
+    normalized = scraper_tasks._normalize_scraped_payload(
+        {
+            "external_id": "123",
+            "metadata": {"platform": "linkedin", "location": "Remote"},
+            "scraped_jobs": '<div id="job-details">Role details</div>',
+        }
+    )
+
+    assert "metadata" not in normalized
+    assert normalized["platform_metadata"] == {
+        "platform": "linkedin",
+        "location": "Remote",
+    }
+    assert normalized["scraped_jobs"] == '<div id="job-details">Role details</div>'
+
+
+def test_normalize_scraped_payload_preserves_existing_platform_metadata() -> None:
+    """Normalizer should not overwrite explicit platform_metadata values."""
+
+    normalized = scraper_tasks._normalize_scraped_payload(
+        {
+            "external_id": "123",
+            "metadata": {"platform": "linkedin", "location": "Remote"},
+            "platform_metadata": {"platform": "linkedin", "location": "Sydney"},
+        }
+    )
+
+    assert "metadata" not in normalized
+    assert normalized["platform_metadata"] == {
+        "platform": "linkedin",
+        "location": "Sydney",
+    }
+
+
+def test_build_job_update_payload_ignores_empty_new_metadata_values() -> None:
+    """Update helper should skip empty enrichment values to avoid noisy writes."""
+
+    existing = SimpleNamespace(
+        description_full=None,
+        description_short=None,
+        job_type=None,
+        scraped_jobs=None,
+        platform_metadata=None,
+    )
+    scraped = {
+        "scraped_jobs": "   ",
+        "platform_metadata": {},
+        "description_full": "",
+    }
+
+    result = scraper_tasks._build_job_update_payload(existing, scraped)
+
+    assert result == {}
+
+
+def test_run_linkedin_scrape_and_persist_maps_metadata_and_persists_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Orchestration should map metadata and persist new raw fields on create."""
+    fake_scraped_jobs = [
+        {
+            "external_id": "new-raw-1",
+            "platform": "linkedin",
+            "url": "https://linkedin.com/jobs/new-raw-1",
+            "title": "Backend Engineer",
+            "company": "Career Scout",
+            "location": "Remote",
+            "description_full": "Full description",
+            "description_short": "Short description",
+            "scraped_jobs": '<div id="job-details"><p>Role</p></div>',
+            "metadata": {"platform": "linkedin", "date_posted": "1 day ago"},
+        }
+    ]
+
+    captured_payloads: list[dict[str, Any]] = []
+
+    class FakeJobRepository:
+        def __init__(self, db_session: Any) -> None:
+            self.db_session = db_session
+
+        async def get_by_external_id(self, external_id: str, platform: str) -> Any:
+            del external_id, platform
+            return None
+
+        async def create(self, payload: dict[str, Any]) -> Any:
+            captured_payloads.append(payload)
+            return SimpleNamespace(id=99)
+
+        async def update(self, job_id: int, payload: dict[str, Any]) -> Any:
+            del job_id, payload
+            raise AssertionError("update should not be called in create path")
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "LinkedInScraper",
+        make_linkedin_scraper_double(fake_scraped_jobs),
+    )
+    monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
+    monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
+
+    result = asyncio.run(
+        scraper_tasks._run_linkedin_scrape_and_persist(
+            query="python",
+            location="remote",
+            limit=3,
+            task_id="task-79",
+        )
+    )
+
+    assert result["created"] == 1
+    assert result["updated"] == 0
+    assert captured_payloads
+    assert (
+        captured_payloads[0]["scraped_jobs"]
+        == '<div id="job-details"><p>Role</p></div>'
+    )
+    assert captured_payloads[0]["platform_metadata"] == {
+        "platform": "linkedin",
+        "date_posted": "1 day ago",
+    }
+    assert "metadata" not in captured_payloads[0]
+
+
+def test_build_job_update_payload_updates_title_when_duplicate_artifact_corrected() -> (
+    None
+):
+    """Existing duplicated title artifact should be corrected from new scrape."""
+
+    existing = SimpleNamespace(
+        title="Software Engineer Software Engineer",
+        description_full="full",
+        description_short="short",
+        job_type="Contract",
+        scraped_jobs=None,
+        platform_metadata=None,
+    )
+    scraped = {
+        "title": "Software Engineer",
+    }
+
+    result = scraper_tasks._build_job_update_payload(existing, scraped)
+
+    assert result == {"title": "Software Engineer"}
+
+
+def test_build_job_update_payload_persists_normalized_incoming_title() -> None:
+    """Duplicate title correction should persist normalized incoming title."""
+
+    existing = SimpleNamespace(
+        title="Software Engineer Software Engineer",
+        description_full="full",
+        description_short="short",
+        job_type="Contract",
+        scraped_jobs=None,
+        platform_metadata=None,
+    )
+    scraped = {
+        "title": "  Software   Engineer  ",
+    }
+
+    result = scraper_tasks._build_job_update_payload(existing, scraped)
+
+    assert result == {"title": "Software Engineer"}
+
+
+def test_build_job_update_payload_updates_separator_joined_duplicate_title() -> None:
+    """Helper should correct separator-joined duplicate title artifacts."""
+
+    existing = SimpleNamespace(
+        title="Software Engineer - Software Engineer",
+        description_full="full",
+        description_short="short",
+        job_type="Contract",
+        scraped_jobs=None,
+        platform_metadata=None,
+    )
+    scraped = {
+        "title": "Software Engineer",
+    }
+
+    result = scraper_tasks._build_job_update_payload(existing, scraped)
+
+    assert result == {"title": "Software Engineer"}
+
+
+def test_build_job_update_payload_does_not_update_distinct_existing_title() -> None:
+    """Distinct titles must not be overwritten by incoming values."""
+
+    existing = SimpleNamespace(
+        title="Senior Software Engineer",
+        description_full="full",
+        description_short="short",
+        job_type="Contract",
+        scraped_jobs=None,
+        platform_metadata=None,
+    )
+    scraped = {
+        "title": "Software Engineer",
+    }
+
+    result = scraper_tasks._build_job_update_payload(existing, scraped)
+
+    assert result == {}
+
+
+def test_build_job_update_payload_does_not_update_legitimate_repeated_word_title() -> (
+    None
+):
+    """Helper should not treat non-adjacent phrase titles as duplicate artifacts."""
+
+    existing = SimpleNamespace(
+        title="Head of People and Culture",
+        description_full="full",
+        description_short="short",
+        job_type="Contract",
+        scraped_jobs=None,
+        platform_metadata=None,
+    )
+    scraped = {
+        "title": "People and Culture Head",
+    }
+
+    result = scraper_tasks._build_job_update_payload(existing, scraped)
+
     assert result == {}
 
 
@@ -854,48 +1153,19 @@ def test_run_linkedin_scrape_and_persist_does_not_count_none_updates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Persistence summary ignores update attempts that return no updated row."""
-
-    class DummyAsyncSession:
-        pass
-
-    class DummySessionContext:
-        async def __aenter__(self) -> DummyAsyncSession:
-            return DummyAsyncSession()
-
-        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-            del exc_type, exc, tb
-
-    class FakeLinkedInScraper:
-        def __init__(self, headless: bool, rate_limit_seconds: float) -> None:
-            self.headless = headless
-            self.rate_limit_seconds = rate_limit_seconds
-
-        async def __aenter__(self) -> "FakeLinkedInScraper":
-            return self
-
-        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-            del exc_type, exc, tb
-
-        async def scrape_jobs(
-            self,
-            query: str,
-            location: str,
-            limit: int,
-        ) -> list[dict[str, Any]]:
-            del query, location, limit
-            return [
-                {
-                    "external_id": "existing-1",
-                    "description_full": "new full",
-                },
-                {
-                    "external_id": "new-1",
-                    "description_full": "new job",
-                },
-            ]
+    fake_scraped_jobs = [
+        {
+            "external_id": "existing-1",
+            "description_full": "new full",
+        },
+        {
+            "external_id": "new-1",
+            "description_full": "new job",
+        },
+    ]
 
     class FakeJobRepository:
-        def __init__(self, db_session: DummyAsyncSession) -> None:
+        def __init__(self, db_session: Any) -> None:
             self.db_session = db_session
 
         async def get_by_external_id(self, external_id: str, platform: str) -> Any:
@@ -906,6 +1176,8 @@ def test_run_linkedin_scrape_and_persist_does_not_count_none_updates(
                     description_full=None,
                     description_short=None,
                     job_type=None,
+                    scraped_jobs=None,
+                    platform_metadata=None,
                 )
             return None
 
@@ -917,7 +1189,11 @@ def test_run_linkedin_scrape_and_persist_does_not_count_none_updates(
             del payload
             return SimpleNamespace(id=19)
 
-    monkeypatch.setattr(scraper_tasks, "LinkedInScraper", FakeLinkedInScraper)
+    monkeypatch.setattr(
+        scraper_tasks,
+        "LinkedInScraper",
+        make_linkedin_scraper_double(fake_scraped_jobs),
+    )
     monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
     monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
 
@@ -939,44 +1215,15 @@ def test_run_linkedin_scrape_and_persist_counts_real_updates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Persistence summary counts updates only when repository returns a row."""
-
-    class DummyAsyncSession:
-        pass
-
-    class DummySessionContext:
-        async def __aenter__(self) -> DummyAsyncSession:
-            return DummyAsyncSession()
-
-        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-            del exc_type, exc, tb
-
-    class FakeLinkedInScraper:
-        def __init__(self, headless: bool, rate_limit_seconds: float) -> None:
-            self.headless = headless
-            self.rate_limit_seconds = rate_limit_seconds
-
-        async def __aenter__(self) -> "FakeLinkedInScraper":
-            return self
-
-        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-            del exc_type, exc, tb
-
-        async def scrape_jobs(
-            self,
-            query: str,
-            location: str,
-            limit: int,
-        ) -> list[dict[str, Any]]:
-            del query, location, limit
-            return [
-                {
-                    "external_id": "existing-1",
-                    "description_full": "new full",
-                }
-            ]
+    fake_scraped_jobs = [
+        {
+            "external_id": "existing-1",
+            "description_full": "new full",
+        }
+    ]
 
     class FakeJobRepository:
-        def __init__(self, db_session: DummyAsyncSession) -> None:
+        def __init__(self, db_session: Any) -> None:
             self.db_session = db_session
 
         async def get_by_external_id(self, external_id: str, platform: str) -> Any:
@@ -986,6 +1233,8 @@ def test_run_linkedin_scrape_and_persist_counts_real_updates(
                 description_full=None,
                 description_short=None,
                 job_type=None,
+                scraped_jobs=None,
+                platform_metadata=None,
             )
 
         async def update(self, job_id: int, payload: dict[str, Any]) -> Any:
@@ -996,7 +1245,11 @@ def test_run_linkedin_scrape_and_persist_counts_real_updates(
             del payload
             raise AssertionError("create should not be called for existing job")
 
-    monkeypatch.setattr(scraper_tasks, "LinkedInScraper", FakeLinkedInScraper)
+    monkeypatch.setattr(
+        scraper_tasks,
+        "LinkedInScraper",
+        make_linkedin_scraper_double(fake_scraped_jobs),
+    )
     monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
     monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
 

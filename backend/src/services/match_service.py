@@ -457,6 +457,7 @@ class MatchService:
             enrichment_updated_at=self._as_datetime(
                 getattr(enrichment, "enriched_at", None)
             ),
+            description_sections=getattr(enrichment, "description_sections", None),
             relevance_score=raw_job.relevance_score,
         )
 

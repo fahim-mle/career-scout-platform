@@ -26,6 +26,7 @@ from src.core.metrics import (
     observe_scraper_duration,
     set_jobs_in_database,
 )
+from src.core.title_normalization import normalize_job_title, title_preview_for_log
 from src.celery_app import celery_app
 from src.db.session import get_session
 from src.repositories.job import JobRepository
@@ -157,29 +158,130 @@ def _build_job_update_payload(
     existing_job: Any,
     scraped_payload: dict[str, Any],
 ) -> dict[str, Any]:
-    """Build a safe update payload for selected LinkedIn enrichments.
+    """Build a safe update payload for selected scraper enrichments.
 
     Args:
         existing_job: Existing ORM job entity from repository lookup.
         scraped_payload: Newly scraped payload for the same external id.
 
     Returns:
-        Field map containing only missing description/job-type values.
+        Field map containing enrichment updates that are safe to apply.
     """
     enrichable_fields = (
         "description_full",
         "description_short",
         "job_type",
+        "scraped_jobs",
+        "platform_metadata",
     )
     updates: dict[str, Any] = {}
 
     for field in enrichable_fields:
         current_value = getattr(existing_job, field, None)
         new_value = scraped_payload.get(field)
-        if current_value is None and new_value is not None:
+        if current_value is None and _has_meaningful_value(new_value):
             updates[field] = new_value
 
+    existing_title = getattr(existing_job, "title", None)
+    incoming_title = scraped_payload.get("title")
+    if _should_update_title_from_duplicate_artifact(
+        existing_title=existing_title,
+        incoming_title=incoming_title,
+    ):
+        normalized_incoming_title = normalize_job_title(incoming_title)
+        if normalized_incoming_title is not None:
+            updates["title"] = normalized_incoming_title
+
     return updates
+
+
+def _normalize_scraped_payload(scraped_payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize scraper payload fields for repository compatibility.
+
+    Args:
+        scraped_payload: Raw payload returned by platform scraper.
+
+    Returns:
+        Payload using repository-compatible field names.
+    """
+    normalized_payload = dict(scraped_payload)
+    metadata_payload = normalized_payload.pop("metadata", None)
+
+    if metadata_payload is not None and "platform_metadata" not in normalized_payload:
+        normalized_payload["platform_metadata"] = metadata_payload
+        logger.bind(
+            operation="normalize_scraped_payload",
+            mapped_field="metadata->platform_metadata",
+            has_metadata=bool(metadata_payload),
+        ).debug("Mapped scraper metadata payload for repository compatibility")
+    elif metadata_payload is not None:
+        logger.bind(
+            operation="normalize_scraped_payload",
+            discarded_field="metadata",
+            preserved_field="platform_metadata",
+        ).debug(
+            "Discarded incoming metadata payload because platform_metadata already exists"
+        )
+
+    return normalized_payload
+
+
+def _has_meaningful_value(value: Any) -> bool:
+    """Return whether scraped value should be persisted for enrichment update.
+
+    Args:
+        value: Candidate scraped value.
+
+    Returns:
+        ``True`` when value is non-empty and meaningful.
+    """
+    if value is None:
+        return False
+
+    if isinstance(value, str):
+        return bool(value.strip())
+
+    if isinstance(value, (list, dict, tuple, set)):
+        return len(value) > 0
+
+    return True
+
+
+def _should_update_title_from_duplicate_artifact(
+    *,
+    existing_title: str | None,
+    incoming_title: str | None,
+) -> bool:
+    """Determine whether a persisted duplicate title should be corrected.
+
+    The correction is intentionally conservative and only allows updates when the
+    existing title is an exact adjacent duplicate phrase artifact and the incoming
+    title matches the collapsed, corrected value.
+    """
+    if not existing_title or not incoming_title:
+        return False
+
+    compact_existing = " ".join(existing_title.split())
+    compact_incoming = " ".join(incoming_title.split())
+    if not compact_existing or not compact_incoming:
+        return False
+    if compact_existing == compact_incoming:
+        return False
+
+    collapsed_existing = normalize_job_title(compact_existing)
+    should_update = (
+        collapsed_existing != compact_existing
+        and collapsed_existing == compact_incoming
+    )
+    if should_update:
+        logger.bind(
+            operation="duplicate_title_correction",
+            changed=True,
+            title_raw=title_preview_for_log(compact_existing),
+            title_normalized=title_preview_for_log(compact_incoming),
+        ).info("Correcting persisted duplicate title artifact")
+
+    return should_update
 
 
 async def _run_linkedin_scrape_and_persist(
@@ -335,7 +437,8 @@ async def _run_scrape_and_persist(
     async with get_session() as db_session:
         job_repository = JobRepository(db_session)
         for job_payload in scraped_jobs:
-            external_id = str(job_payload.get("external_id", ""))
+            normalized_payload = _normalize_scraped_payload(job_payload)
+            external_id = str(normalized_payload.get("external_id", ""))
 
             if not external_id:
                 failed_count += 1
@@ -354,7 +457,7 @@ async def _run_scrape_and_persist(
                 if existing_job is not None:
                     update_payload = _build_job_update_payload(
                         existing_job=existing_job,
-                        scraped_payload=job_payload,
+                        scraped_payload=normalized_payload,
                     )
                     if update_payload:
                         updated_job = await job_repository.update(
@@ -368,7 +471,7 @@ async def _run_scrape_and_persist(
                     duplicate_count += 1
                     continue
 
-                created_job = await job_repository.create(job_payload)
+                created_job = await job_repository.create(normalized_payload)
                 enrichment_job_ids.add(created_job.id)
                 created_count += 1
             except DuplicateJobError:

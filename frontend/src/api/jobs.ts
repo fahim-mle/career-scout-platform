@@ -1,4 +1,9 @@
-import { EnrichmentStatus, Job, Platform } from '../types/job';
+import {
+  DescriptionSection,
+  EnrichmentStatus,
+  Job,
+  Platform,
+} from '../types/job';
 import apiClient from './apiClient';
 
 export interface BackendJob {
@@ -28,6 +33,7 @@ export interface BackendJob {
   enrichment_status: EnrichmentStatus | null;
   enrichment_version: string | null;
   enrichment_updated_at: string | null;
+  description_sections: DescriptionSection[] | null;
   relevance_score: number | null;
 }
 
@@ -80,6 +86,7 @@ const normalizeJob = (data: BackendJob): Job => ({
   enrichmentStatus: data.enrichment_status,
   enrichmentVersion: data.enrichment_version,
   enrichmentUpdatedAt: data.enrichment_updated_at,
+  descriptionSections: data.description_sections ?? null,
   relevanceScore: data.relevance_score,
 });
 

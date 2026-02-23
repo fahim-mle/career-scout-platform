@@ -276,6 +276,123 @@ def test_extract_salary_range_preserves_raw_text_for_single_salary() -> None:
     assert result["raw"] == "AUD   45"
 
 
+def test_extract_description_sections_groups_headings_and_bullets() -> None:
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+
+    result = service.extract_description_sections(
+        """
+        About the job
+        Build and scale backend services.
+
+        Requirements
+        - Python
+        - FastAPI
+        """
+    )
+
+    assert result == [
+        {
+            "title": "About",
+            "items": ["Build and scale backend services."],
+        },
+        {
+            "title": "Requirements",
+            "items": ["Python", "FastAPI"],
+        },
+    ]
+
+
+def test_extract_description_sections_returns_empty_for_blank_input() -> None:
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+
+    result = service.extract_description_sections("   \n\t  ")
+
+    assert result == []
+
+
+def test_extract_description_sections_drops_empty_heading_section() -> None:
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+
+    result = service.extract_description_sections(
+        """
+        About the job
+        Requirements
+        - Python
+        """
+    )
+
+    assert result == [
+        {
+            "title": "Requirements",
+            "items": ["Python"],
+        }
+    ]
+
+
+def test_extract_description_sections_deduplicates_adjacent_items_case_insensitive() -> (
+    None
+):
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+
+    result = service.extract_description_sections(
+        """
+        Requirements
+        - Python
+        - python
+        - FastAPI
+        - FASTAPI
+        """
+    )
+
+    assert result == [
+        {
+            "title": "Requirements",
+            "items": ["Python", "FastAPI"],
+        }
+    ]
+
+
+def test_extract_description_sections_does_not_match_heading_inside_bullets() -> None:
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+
+    result = service.extract_description_sections(
+        """
+        Responsibilities
+        - Experience with Python and FastAPI
+        - Collaborate with product and design
+        """
+    )
+
+    assert result == [
+        {
+            "title": "Responsibilities",
+            "items": [
+                "Experience with Python and FastAPI",
+                "Collaborate with product and design",
+            ],
+        }
+    ]
+
+
+def test_extract_description_sections_maps_key_skills_heading_to_requirements() -> None:
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+
+    result = service.extract_description_sections(
+        """
+        Key Skills
+        - Python
+        - FastAPI
+        """
+    )
+
+    assert result == [
+        {
+            "title": "Requirements",
+            "items": ["Python", "FastAPI"],
+        }
+    ]
+
+
 def test_build_enrichment_payload_maps_salary_range_to_processed_columns() -> None:
     service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
     job = make_job(
@@ -292,7 +409,29 @@ def test_build_enrichment_payload_maps_salary_range_to_processed_columns() -> No
     assert result["salary_currency"] == "AUD"
     assert result["salary_period"] == "hour"
     assert result["salary_raw"] == "$45"
+    assert isinstance(result.get("description_sections"), list)
+    assert result["description_sections"][0]["title"] == "Overview"
     assert result["status"] == "success"
+
+
+def test_build_enrichment_payload_uses_first_non_empty_description_for_sections() -> (
+    None
+):
+    service = make_service(FakeJobRepository(), FakeJobEnrichmentRepository())
+    job = make_job(
+        title="Backend Engineer",
+        description_full="   ",
+        description_short="Key Skills\n- Python\n- FastAPI",
+    )
+
+    result = service.build_enrichment_payload(cast(Job, job))
+
+    assert result["description_sections"] == [
+        {
+            "title": "Requirements",
+            "items": ["Python", "FastAPI"],
+        }
+    ]
 
 
 def test_salary_range_to_enrichment_fields_keeps_salary_period_nullable() -> None:

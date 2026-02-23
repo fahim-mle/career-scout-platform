@@ -5,8 +5,13 @@
 Install dependencies in your virtual environment:
 
 ```bash
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements-dev.txt
 ```
+
+If your editor still shows unresolved imports, reload the Python language server
+after selecting `backend/.venv/bin/python` as the interpreter.
 
 ## Testing
 

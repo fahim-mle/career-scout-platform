@@ -54,6 +54,12 @@ class Job(BaseModel):
     job_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     description_short: Mapped[str | None] = mapped_column(Text, nullable=True)
     description_full: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scraped_jobs: Mapped[str | None] = mapped_column(Text, nullable=True)
+    platform_metadata: Mapped[dict[str, Any] | None] = mapped_column(
+        "metadata",
+        JSONB,
+        nullable=True,
+    )
     posted_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     scraped_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -130,5 +136,28 @@ class Job(BaseModel):
             raise ValueError(
                 "Invalid salary_range payload: 'currency' must be a non-empty string."
             )
+
+        return value
+
+    @validates("platform_metadata")
+    def validate_platform_metadata(
+        self,
+        key: str,
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Validate metadata structure as a JSON object.
+
+        Args:
+            key: SQLAlchemy field key.
+            value: Platform-scoped metadata payload.
+
+        Returns:
+            Validated metadata object or ``None``.
+        """
+        if value is None:
+            return value
+
+        if not isinstance(value, dict):
+            raise ValueError("Invalid metadata payload: expected an object.")
 
         return value

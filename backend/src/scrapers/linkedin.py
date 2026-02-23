@@ -12,6 +12,11 @@ from loguru import logger
 from playwright.async_api import ElementHandle, TimeoutError as PlaywrightTimeoutError
 
 from src.core.config import settings
+from src.core.title_normalization import (
+    normalize_job_title,
+    normalize_title_whitespace,
+    title_preview_for_log,
+)
 from src.scrapers.base import BaseScraper
 
 
@@ -48,6 +53,15 @@ class LinkedInScraper(BaseScraper):
         "button[aria-label*='Show more']",
         "button[aria-label*='See more']",
     )
+    DESCRIPTION_HTML_SELECTORS = (
+        "#job-details",
+        "div.jobs-box__html-content",
+        "section.show-more-less-html",
+        "div.show-more-less-html__markup",
+        "div.jobs-description-content__text--stretch",
+        "div.jobs-description-content__text",
+        "div.jobs-description__content",
+    )
     CARD_SNIPPET_SELECTORS = (
         ".job-search-card__snippet",
         ".job-card-list__description",
@@ -63,11 +77,15 @@ class LinkedInScraper(BaseScraper):
     MAX_DETAIL_EXTRACTION_ATTEMPTS = 2
     SHORT_DESCRIPTION_MAX_LENGTH = 360
     MAX_DESCRIPTION_FULL_LENGTH = 3_000
+    MAX_FALLBACK_DESCRIPTION_HTML_LENGTH = 100_000
     DESCRIPTION_END_MARKERS = (
         "Set alert for similar jobs",
         "Interested in working with us in the future?",
         "Looking for talent? Post a job",
         "About the company",
+    )
+    DESCRIPTION_TRAILING_MORE_PATTERN = re.compile(
+        r"(?:\.\.\.|…)\s*more\s*$", re.IGNORECASE
     )
     JOB_CARD_SELECTORS = (
         "ul.jobs-search__results-list li",
@@ -104,6 +122,12 @@ class LinkedInScraper(BaseScraper):
         ".job-details-jobs-unified-top-card__job-insight",
         ".jobs-unified-top-card__job-insight",
         ".jobs-unified-top-card__workplace-type",
+    )
+    TOP_CARD_METADATA_SELECTORS = (
+        ".job-details-jobs-unified-top-card__primary-description-container",
+        ".job-details-jobs-unified-top-card__tertiary-description-container",
+        ".jobs-unified-top-card__primary-description-container",
+        ".jobs-unified-top-card__subtitle-primary-grouping",
     )
     JOB_TYPE_HINTS = (
         "full-time",
@@ -332,13 +356,119 @@ class LinkedInScraper(BaseScraper):
             description_full = await self._extract_description_with_fallback()
         description_full = self._sanitize_description_text(description_full)
 
+        raw_description_html: str | None = None
+        try:
+            raw_description_html = await self._extract_description_html_with_fallback()
+        except Exception as exc:
+            logger.bind(
+                scraper=self.__class__.__name__,
+                url=job_url,
+                error=str(exc),
+            ).warning("Failed LinkedIn raw description HTML extraction")
+
+        metadata = self._build_default_metadata()
+        try:
+            metadata = await self._extract_top_card_metadata()
+        except Exception as exc:
+            logger.bind(
+                scraper=self.__class__.__name__,
+                url=job_url,
+                error=str(exc),
+            ).warning("Failed LinkedIn top-card metadata extraction")
+
         details: dict[str, Any] = {
             "description_full": description_full,
             "description_short": self._build_short_description(description_full),
             "job_type": await self._extract_job_type(),
+            "scraped_jobs": raw_description_html,
+            "metadata": metadata,
         }
 
         return {key: value for key, value in details.items() if value is not None}
+
+    async def _extract_description_html_with_fallback(self) -> str | None:
+        """Extract raw description HTML from preferred and fallback selectors.
+
+        Returns:
+            Raw HTML string from the first matching description container,
+            otherwise ``None``.
+
+        Raises:
+            RuntimeError: If scraper page is not initialized.
+        """
+        if self.page is None:
+            raise RuntimeError("Scraper page is not initialized")
+
+        for attempt in range(1, self.MAX_DETAIL_EXTRACTION_ATTEMPTS + 1):
+            if attempt > 1:
+                logger.bind(
+                    scraper=self.__class__.__name__,
+                    attempt=attempt,
+                ).info("Retrying LinkedIn raw description HTML extraction")
+                await self._rate_limit_with_jitter(base_seconds=1.0)
+
+            html = await self._extract_html_from_page_selectors(
+                selectors=self.DESCRIPTION_HTML_SELECTORS,
+                extraction_label="description_html",
+            )
+            if html:
+                return html
+
+            await self._expand_description_if_available()
+
+        logger.bind(scraper=self.__class__.__name__).info(
+            "Falling back to broad selectors for raw LinkedIn description HTML"
+        )
+        fallback_html = await self._extract_html_from_page_selectors(
+            selectors=self.DESCRIPTION_FALLBACK_SELECTORS,
+            extraction_label="description_html_fallback",
+        )
+        return self._cap_fallback_description_html(fallback_html)
+
+    async def _extract_top_card_metadata(self) -> dict[str, Any]:
+        """Extract LinkedIn top-card metadata into generic schema payload.
+
+        Returns:
+            Metadata payload with fixed LinkedIn metadata keys.
+
+        Raises:
+            RuntimeError: If scraper page is not initialized.
+        """
+        if self.page is None:
+            raise RuntimeError("Scraper page is not initialized")
+
+        metadata = self._build_default_metadata()
+        for selector in self.TOP_CARD_METADATA_SELECTORS:
+            element = await self.page.query_selector(selector)
+            if element is None:
+                continue
+
+            try:
+                raw_text = await element.inner_text()
+            except PlaywrightTimeoutError:
+                logger.bind(
+                    scraper=self.__class__.__name__,
+                    selector=selector,
+                ).debug("LinkedIn top-card metadata selector timed out")
+                continue
+
+            parsed = self._parse_top_card_metadata_text(raw_text)
+            metadata.update(parsed)
+            logger.bind(
+                scraper=self.__class__.__name__,
+                selector=selector,
+                has_location=bool(metadata.get("location")),
+                has_date_posted=bool(metadata.get("date_posted")),
+                has_applicants=bool(metadata.get("number_of_applicants")),
+                promoted=bool(metadata.get("promoted_by_hirer")),
+                actively_reviewing=bool(metadata.get("actively_reviewing_applicants")),
+            ).info("Extracted LinkedIn top-card metadata")
+            return metadata
+
+        logger.bind(scraper=self.__class__.__name__).info(
+            "LinkedIn top-card metadata block not found; using defaults"
+        )
+        return metadata
 
     async def _collect_job_cards(self) -> list[ElementHandle]:
         """Collect visible job card elements using resilient selector fallbacks.
@@ -391,9 +521,19 @@ class LinkedInScraper(BaseScraper):
             )
             return None
 
-        title = await self._extract_first_text(card, self.TITLE_SELECTORS)
+        raw_title = await self._extract_first_raw_text(card, self.TITLE_SELECTORS)
+        title = normalize_job_title(raw_title)
         company = await self._extract_first_text(card, self.COMPANY_SELECTORS)
         location = await self._extract_first_text(card, self.LOCATION_SELECTORS)
+
+        if raw_title and title and raw_title != title:
+            logger.bind(
+                scraper=self.__class__.__name__,
+                normalization="adjacent_duplicate_phrase",
+                changed=True,
+                title_raw=title_preview_for_log(raw_title),
+                title_normalized=title_preview_for_log(title),
+            ).info("Normalized LinkedIn title artifact")
 
         if not title or not company or not location:
             return None
@@ -522,6 +662,58 @@ class LinkedInScraper(BaseScraper):
 
         return None
 
+    async def _extract_html_from_page_selectors(
+        self,
+        selectors: tuple[str, ...],
+        extraction_label: str,
+    ) -> str | None:
+        """Extract raw outer HTML from first matching selector.
+
+        Args:
+            selectors: Ordered CSS selector fallbacks.
+            extraction_label: Structured log label for extraction context.
+
+        Returns:
+            Raw outer HTML string when found, otherwise ``None``.
+
+        Raises:
+            RuntimeError: If scraper page is not initialized.
+        """
+        if self.page is None:
+            raise RuntimeError("Scraper page is not initialized")
+
+        for selector in selectors:
+            element = await self.page.query_selector(selector)
+            if element is None:
+                continue
+
+            try:
+                raw_html = await element.evaluate("node => node.outerHTML")
+                if isinstance(raw_html, str) and raw_html.strip():
+                    logger.bind(
+                        scraper=self.__class__.__name__,
+                        selector=selector,
+                        extraction_label=extraction_label,
+                    ).info("Extracted LinkedIn raw HTML block")
+                    return raw_html.strip()
+            except PlaywrightTimeoutError:
+                logger.bind(
+                    scraper=self.__class__.__name__,
+                    selector=selector,
+                    extraction_label=extraction_label,
+                ).debug("LinkedIn raw HTML extraction timed out")
+                continue
+            except Exception as exc:
+                logger.bind(
+                    scraper=self.__class__.__name__,
+                    selector=selector,
+                    extraction_label=extraction_label,
+                    error=str(exc),
+                ).debug("LinkedIn raw HTML extraction failed for selector")
+                continue
+
+        return None
+
     async def _extract_job_type(self) -> str | None:
         """Extract job type value from detail page insights.
 
@@ -554,13 +746,141 @@ class LinkedInScraper(BaseScraper):
         if not description_full:
             return None
 
-        if len(description_full) <= cls.SHORT_DESCRIPTION_MAX_LENGTH:
-            return description_full
+        summary_text = cls._normalize_text(description_full)
+        if not summary_text:
+            return None
 
-        cutoff = description_full.rfind(" ", 0, cls.SHORT_DESCRIPTION_MAX_LENGTH)
+        if len(summary_text) <= cls.SHORT_DESCRIPTION_MAX_LENGTH:
+            return summary_text
+
+        cutoff = summary_text.rfind(" ", 0, cls.SHORT_DESCRIPTION_MAX_LENGTH)
         if cutoff <= 0:
             cutoff = cls.SHORT_DESCRIPTION_MAX_LENGTH
-        return f"{description_full[:cutoff].rstrip()}..."
+        return f"{summary_text[:cutoff].rstrip()}..."
+
+    @classmethod
+    def _build_default_metadata(cls) -> dict[str, Any]:
+        """Build default LinkedIn metadata payload for generic schema storage.
+
+        Returns:
+            Metadata object containing stable LinkedIn metadata keys.
+        """
+        return {
+            "platform": cls.PLATFORM,
+            "location": None,
+            "date_posted": None,
+            "number_of_applicants": None,
+            "promoted_by_hirer": False,
+            "actively_reviewing_applicants": False,
+        }
+
+    @classmethod
+    def _parse_top_card_metadata_text(cls, raw_text: str | None) -> dict[str, Any]:
+        """Parse LinkedIn top-card tertiary text into metadata keys.
+
+        Args:
+            raw_text: Raw top-card text content from LinkedIn detail page.
+
+        Returns:
+            Parsed metadata fields excluding the fixed platform key.
+        """
+        parsed: dict[str, Any] = {
+            "location": None,
+            "date_posted": None,
+            "number_of_applicants": None,
+            "promoted_by_hirer": False,
+            "actively_reviewing_applicants": False,
+        }
+        normalized = cls._normalize_metadata_text(raw_text)
+        if not normalized:
+            return parsed
+
+        segments = [
+            segment
+            for segment in (
+                cls._normalize_metadata_text(part)
+                for part in re.split(r"[·•|]", normalized)
+            )
+            if segment
+        ]
+
+        for segment in segments:
+            segment_lower = segment.lower()
+            if "promoted by hirer" in segment_lower:
+                parsed["promoted_by_hirer"] = True
+                continue
+            if "actively reviewing applicants" in segment_lower:
+                parsed["actively_reviewing_applicants"] = True
+                continue
+            if "applicant" in segment_lower and parsed["number_of_applicants"] is None:
+                parsed["number_of_applicants"] = segment
+                continue
+            if cls._looks_like_relative_date(segment) and parsed["date_posted"] is None:
+                parsed["date_posted"] = segment
+                continue
+            if parsed["location"] is None:
+                parsed["location"] = segment
+
+        return parsed
+
+    @classmethod
+    def _cap_fallback_description_html(cls, value: str | None) -> str | None:
+        """Cap broad-fallback HTML payload size before persistence.
+
+        Args:
+            value: Raw fallback HTML payload.
+
+        Returns:
+            Original payload when within the safety limit, otherwise a truncated copy.
+        """
+        if value is None:
+            return None
+        if len(value) <= cls.MAX_FALLBACK_DESCRIPTION_HTML_LENGTH:
+            return value
+
+        logger.bind(
+            scraper=cls.__name__,
+            original_length=len(value),
+            capped_length=cls.MAX_FALLBACK_DESCRIPTION_HTML_LENGTH,
+        ).warning("Capped LinkedIn fallback raw description HTML payload")
+        return value[: cls.MAX_FALLBACK_DESCRIPTION_HTML_LENGTH]
+
+    @staticmethod
+    def _normalize_metadata_text(value: str | None) -> str | None:
+        """Normalize metadata text by collapsing all whitespace.
+
+        Args:
+            value: Raw metadata text.
+
+        Returns:
+            Whitespace-normalized metadata text when present, otherwise ``None``.
+        """
+        if value is None:
+            return None
+
+        compact = re.sub(r"\s+", " ", value).strip()
+        return compact or None
+
+    @staticmethod
+    def _looks_like_relative_date(value: str) -> bool:
+        """Return whether text appears to be LinkedIn relative date wording.
+
+        Args:
+            value: Candidate metadata segment.
+
+        Returns:
+            ``True`` when segment resembles a relative date value.
+        """
+        lowered = value.lower()
+        if any(token in lowered for token in ("today", "yesterday", "just now")):
+            return True
+
+        return bool(
+            re.search(
+                r"\b\d+\+?\s+(minute|hour|day|week|month|year)s?\s+ago\b",
+                lowered,
+            )
+        )
 
     @classmethod
     def _sanitize_description_text(cls, value: str | None) -> str | None:
@@ -568,7 +888,7 @@ class LinkedInScraper(BaseScraper):
         if not value:
             return None
 
-        normalized = cls._normalize_text(value)
+        normalized = cls._normalize_description_text(value)
         if not normalized:
             return None
 
@@ -580,7 +900,9 @@ class LinkedInScraper(BaseScraper):
             if marker in normalized:
                 normalized = normalized[: normalized.find(marker)]
 
-        normalized = cls._normalize_text(normalized)
+        normalized = cls.DESCRIPTION_TRAILING_MORE_PATTERN.sub("", normalized).strip()
+
+        normalized = cls._normalize_description_text(normalized)
         if not normalized:
             return None
 
@@ -591,6 +913,20 @@ class LinkedInScraper(BaseScraper):
         if cutoff <= 0:
             cutoff = cls.MAX_DESCRIPTION_FULL_LENGTH
         return normalized[:cutoff].rstrip()
+
+    @classmethod
+    def _normalize_description_text(cls, value: str) -> str | None:
+        """Normalize text while keeping line breaks for section readability."""
+        raw_lines = value.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        normalized_lines: list[str] = []
+        for line in raw_lines:
+            compact = cls._normalize_text(line)
+            if compact:
+                normalized_lines.append(compact)
+
+        if not normalized_lines:
+            return None
+        return "\n".join(normalized_lines)
 
     @classmethod
     def _build_search_url(cls, query: str, location: str) -> str:
@@ -665,6 +1001,22 @@ class LinkedInScraper(BaseScraper):
         value = await element.inner_text()
         return self._normalize_text(value)
 
+    async def _extract_raw_text(self, card: ElementHandle, selector: str) -> str | None:
+        """Extract unnormalized text for a selector within a card.
+
+        Args:
+            card: Card element handle.
+            selector: CSS selector to query inside card.
+
+        Returns:
+            Raw text when present, otherwise ``None``.
+        """
+        element = await card.query_selector(selector)
+        if element is None:
+            return None
+
+        return await element.inner_text()
+
     async def _extract_first_text(
         self,
         card: ElementHandle,
@@ -683,6 +1035,28 @@ class LinkedInScraper(BaseScraper):
             value = await self._extract_text(card, selector)
             if value:
                 return value
+
+        return None
+
+    async def _extract_first_raw_text(
+        self,
+        card: ElementHandle,
+        selectors: tuple[str, ...],
+    ) -> str | None:
+        """Extract first non-empty raw text from selector fallbacks.
+
+        Args:
+            card: Card element handle.
+            selectors: Ordered CSS selector fallbacks.
+
+        Returns:
+            Raw text when available, otherwise ``None``.
+        """
+        for selector in selectors:
+            value = await self._extract_raw_text(card, selector)
+            normalized = normalize_title_whitespace(value)
+            if normalized:
+                return normalized
 
         return None
 
@@ -709,7 +1083,7 @@ class LinkedInScraper(BaseScraper):
 
     @staticmethod
     def _normalize_text(value: str) -> str | None:
-        """Normalize text by collapsing whitespace.
+        """Normalize text by collapsing whitespace only.
 
         Args:
             value: Raw text value.
@@ -717,8 +1091,7 @@ class LinkedInScraper(BaseScraper):
         Returns:
             Normalized string or ``None`` when the value is empty.
         """
-        normalized = " ".join(value.split())
-        return normalized if normalized else None
+        return normalize_title_whitespace(value)
 
     async def _assert_no_challenge(self, stage: str) -> None:
         """Raise when LinkedIn challenge/captcha cues are detected.
