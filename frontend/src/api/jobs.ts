@@ -54,7 +54,27 @@ export interface GetJobsParams {
   platform?: string;
   is_active?: boolean;
   sort?: 'date' | 'relevance';
+  job_type?: string;
+  search?: string;
 }
+
+const sanitizeJobsParams = (params: GetJobsParams): GetJobsParams => {
+  const normalizeValue = (value?: string): string | undefined => {
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  };
+
+  return {
+    ...params,
+    platform: normalizeValue(params.platform),
+    job_type: normalizeValue(params.job_type),
+    search: normalizeValue(params.search),
+  };
+};
 
 /**
  * Normalizes snake_case backend response to camelCase frontend model.
@@ -91,7 +111,7 @@ const normalizeJob = (data: BackendJob): Job => ({
 });
 
 export const getJobs = async (params: GetJobsParams = {}): Promise<Job[]> => {
-  const response = await apiClient.get('/jobs', { params });
+  const response = await apiClient.get('/jobs', { params: sanitizeJobsParams(params) });
   return (response.data || []).map(normalizeJob);
 };
 

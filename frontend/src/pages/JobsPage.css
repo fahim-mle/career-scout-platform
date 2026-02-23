@@ -1,0 +1,110 @@
+/* ── Jobs page toolbar ──────────────────────────────────────── */
+.jobs-toolbar {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    margin-bottom: 1.25rem;
+    flex-wrap: wrap;
+}
+
+.jobs-search {
+    flex: 1 1 240px;
+    min-width: 0;
+    padding: 0.55rem 1rem;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+    color: inherit;
+    font-size: 0.875rem;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.jobs-search::placeholder {
+    color: rgba(255, 255, 255, 0.35);
+}
+
+.jobs-search:focus {
+    border-color: rgba(109, 107, 250, 0.6);
+    background: rgba(255, 255, 255, 0.07);
+}
+
+.jobs-toolbar__actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+/* ── Toolbar buttons ─────────────────────────────────────────── */
+.jobs-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.05);
+    color: rgba(255, 255, 255, 0.75);
+    font-size: 0.8rem;
+    font-family: inherit;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    white-space: nowrap;
+}
+
+.jobs-btn:hover {
+    background: rgba(255, 255, 255, 0.09);
+    border-color: rgba(255, 255, 255, 0.22);
+    color: #fff;
+}
+
+.jobs-btn--active {
+    background: rgba(109, 107, 250, 0.15);
+    border-color: rgba(109, 107, 250, 0.5);
+    color: #a5a3ff;
+}
+
+.jobs-btn--active:hover {
+    background: rgba(109, 107, 250, 0.22);
+}
+
+.jobs-btn--ghost {
+    background: transparent;
+    border-color: transparent;
+    color: rgba(255, 255, 255, 0.45);
+}
+
+.jobs-btn--ghost:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.jobs-btn__badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.1rem;
+    height: 1.1rem;
+    padding: 0 0.25rem;
+    border-radius: 999px;
+    background: #6d6bfa;
+    color: #fff;
+    font-size: 0.65rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+/* ── Error state ─────────────────────────────────────────────── */
+.jobs-error {
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    color: #fca5a5;
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+}
