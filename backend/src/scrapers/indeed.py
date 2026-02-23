@@ -11,6 +11,12 @@ from loguru import logger
 from playwright.async_api import ElementHandle, TimeoutError as PlaywrightTimeoutError
 
 from src.scrapers.base import BaseScraper
+from src.scrapers.common.cards import extract_first_text, query_first
+from src.scrapers.common.selectors import (
+    extract_html_from_page_selectors,
+    extract_text_from_page_selectors,
+)
+from src.scrapers.common.text import build_short_description, normalize_whitespace
 
 
 class IndeedScraper(BaseScraper):
@@ -492,14 +498,11 @@ class IndeedScraper(BaseScraper):
         Returns:
             First normalized text value or ``None``.
         """
-        for selector in selectors:
-            element = await root.query_selector(selector)
-            if element is None:
-                continue
-            value = self._normalize_text(await element.inner_text())
-            if value:
-                return value
-        return None
+        return await extract_first_text(
+            root=root,
+            selectors=selectors,
+            normalize_text=self._normalize_text,
+        )
 
     async def _query_first(
         self,
@@ -515,11 +518,7 @@ class IndeedScraper(BaseScraper):
         Returns:
             First matching element or ``None``.
         """
-        for selector in selectors:
-            element = await root.query_selector(selector)
-            if element is not None:
-                return element
-        return None
+        return await query_first(root=root, selectors=selectors)
 
     async def _extract_text_from_page_selectors(
         self,
@@ -539,18 +538,12 @@ class IndeedScraper(BaseScraper):
         if self.page is None:
             raise RuntimeError("Scraper page is not initialized")
 
-        for selector in selectors:
-            element = await self.page.query_selector(selector)
-            if element is None:
-                continue
-            try:
-                raw_text = await element.inner_text()
-                normalized = self._normalize_text(raw_text)
-                if normalized:
-                    return normalized
-            except PlaywrightTimeoutError:
-                continue
-        return None
+        return await extract_text_from_page_selectors(
+            page=self.page,
+            selectors=selectors,
+            normalize_text=self._normalize_text,
+            timeout_errors=(PlaywrightTimeoutError,),
+        )
 
     async def _extract_html_from_page_selectors(
         self,
@@ -572,37 +565,16 @@ class IndeedScraper(BaseScraper):
         if self.page is None:
             raise RuntimeError("Scraper page is not initialized")
 
-        for selector in selectors:
-            element = await self.page.query_selector(selector)
-            if element is None:
-                continue
-
-            try:
-                raw_html = await element.evaluate("node => node.outerHTML")
-                if isinstance(raw_html, str) and raw_html.strip():
-                    logger.bind(
-                        scraper=self.__class__.__name__,
-                        selector=selector,
-                        extraction_label=extraction_label,
-                    ).info("Extracted Indeed raw description HTML")
-                    return raw_html.strip()
-            except PlaywrightTimeoutError:
-                logger.bind(
-                    scraper=self.__class__.__name__,
-                    selector=selector,
-                    extraction_label=extraction_label,
-                ).debug("Indeed raw HTML extraction timed out")
-                continue
-            except Exception as exc:
-                logger.bind(
-                    scraper=self.__class__.__name__,
-                    selector=selector,
-                    extraction_label=extraction_label,
-                    error=str(exc),
-                ).debug("Indeed raw HTML extraction failed for selector")
-                continue
-
-        return None
+        return await extract_html_from_page_selectors(
+            page=self.page,
+            selectors=selectors,
+            extraction_label=extraction_label,
+            scraper_name=self.__class__.__name__,
+            success_message="Extracted Indeed raw description HTML",
+            timeout_message="Indeed raw HTML extraction timed out",
+            failure_message="Indeed raw HTML extraction failed for selector",
+            timeout_errors=(PlaywrightTimeoutError,),
+        )
 
     async def _extract_company_rating(self) -> str | None:
         """Extract normalized company rating text from detail page.
@@ -707,13 +679,10 @@ class IndeedScraper(BaseScraper):
         if not description_full:
             return None
 
-        if len(description_full) <= cls.SHORT_DESCRIPTION_MAX_LENGTH:
-            return description_full
-
-        cutoff = description_full.rfind(" ", 0, cls.SHORT_DESCRIPTION_MAX_LENGTH)
-        if cutoff <= 0:
-            cutoff = cls.SHORT_DESCRIPTION_MAX_LENGTH
-        return f"{description_full[:cutoff].rstrip()}..."
+        return build_short_description(
+            description_full=description_full,
+            max_length=cls.SHORT_DESCRIPTION_MAX_LENGTH,
+        )
 
     @classmethod
     def _build_search_url(cls, query: str, location: str) -> str:
@@ -863,8 +832,7 @@ class IndeedScraper(BaseScraper):
         Returns:
             Normalized string or ``None`` when empty.
         """
-        normalized = " ".join(value.split())
-        return normalized if normalized else None
+        return normalize_whitespace(value)
 
 
 class IndeedScraperError(RuntimeError):

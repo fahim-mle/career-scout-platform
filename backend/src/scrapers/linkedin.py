@@ -18,6 +18,16 @@ from src.core.title_normalization import (
     title_preview_for_log,
 )
 from src.scrapers.base import BaseScraper
+from src.scrapers.common.cards import (
+    extract_first_raw_text,
+    extract_first_text,
+    query_first,
+)
+from src.scrapers.common.selectors import (
+    extract_html_from_page_selectors,
+    extract_text_from_page_selectors,
+)
+from src.scrapers.common.text import build_short_description
 
 
 class LinkedInScraper(BaseScraper):
@@ -648,19 +658,12 @@ class LinkedInScraper(BaseScraper):
         if self.page is None:
             raise RuntimeError("Scraper page is not initialized")
 
-        for selector in selectors:
-            element = await self.page.query_selector(selector)
-            if element is None:
-                continue
-            try:
-                raw_text = await element.inner_text()
-                normalized = self._normalize_text(raw_text)
-                if normalized:
-                    return normalized
-            except PlaywrightTimeoutError:
-                continue
-
-        return None
+        return await extract_text_from_page_selectors(
+            page=self.page,
+            selectors=selectors,
+            normalize_text=self._normalize_text,
+            timeout_errors=(PlaywrightTimeoutError,),
+        )
 
     async def _extract_html_from_page_selectors(
         self,
@@ -682,37 +685,16 @@ class LinkedInScraper(BaseScraper):
         if self.page is None:
             raise RuntimeError("Scraper page is not initialized")
 
-        for selector in selectors:
-            element = await self.page.query_selector(selector)
-            if element is None:
-                continue
-
-            try:
-                raw_html = await element.evaluate("node => node.outerHTML")
-                if isinstance(raw_html, str) and raw_html.strip():
-                    logger.bind(
-                        scraper=self.__class__.__name__,
-                        selector=selector,
-                        extraction_label=extraction_label,
-                    ).info("Extracted LinkedIn raw HTML block")
-                    return raw_html.strip()
-            except PlaywrightTimeoutError:
-                logger.bind(
-                    scraper=self.__class__.__name__,
-                    selector=selector,
-                    extraction_label=extraction_label,
-                ).debug("LinkedIn raw HTML extraction timed out")
-                continue
-            except Exception as exc:
-                logger.bind(
-                    scraper=self.__class__.__name__,
-                    selector=selector,
-                    extraction_label=extraction_label,
-                    error=str(exc),
-                ).debug("LinkedIn raw HTML extraction failed for selector")
-                continue
-
-        return None
+        return await extract_html_from_page_selectors(
+            page=self.page,
+            selectors=selectors,
+            extraction_label=extraction_label,
+            scraper_name=self.__class__.__name__,
+            success_message="Extracted LinkedIn raw HTML block",
+            timeout_message="LinkedIn raw HTML extraction timed out",
+            failure_message="LinkedIn raw HTML extraction failed for selector",
+            timeout_errors=(PlaywrightTimeoutError,),
+        )
 
     async def _extract_job_type(self) -> str | None:
         """Extract job type value from detail page insights.
@@ -750,13 +732,11 @@ class LinkedInScraper(BaseScraper):
         if not summary_text:
             return None
 
-        if len(summary_text) <= cls.SHORT_DESCRIPTION_MAX_LENGTH:
-            return summary_text
-
-        cutoff = summary_text.rfind(" ", 0, cls.SHORT_DESCRIPTION_MAX_LENGTH)
-        if cutoff <= 0:
-            cutoff = cls.SHORT_DESCRIPTION_MAX_LENGTH
-        return f"{summary_text[:cutoff].rstrip()}..."
+        return build_short_description(
+            description_full=summary_text,
+            max_length=cls.SHORT_DESCRIPTION_MAX_LENGTH,
+            normalizer=cls._normalize_text,
+        )
 
     @classmethod
     def _build_default_metadata(cls) -> dict[str, Any]:
@@ -1031,12 +1011,11 @@ class LinkedInScraper(BaseScraper):
         Returns:
             Normalized text when available, otherwise ``None``.
         """
-        for selector in selectors:
-            value = await self._extract_text(card, selector)
-            if value:
-                return value
-
-        return None
+        return await extract_first_text(
+            root=card,
+            selectors=selectors,
+            normalize_text=self._normalize_text,
+        )
 
     async def _extract_first_raw_text(
         self,
@@ -1052,13 +1031,11 @@ class LinkedInScraper(BaseScraper):
         Returns:
             Raw text when available, otherwise ``None``.
         """
-        for selector in selectors:
-            value = await self._extract_raw_text(card, selector)
-            normalized = normalize_title_whitespace(value)
-            if normalized:
-                return normalized
-
-        return None
+        return await extract_first_raw_text(
+            root=card,
+            selectors=selectors,
+            normalize_raw_text=normalize_title_whitespace,
+        )
 
     async def _query_first(
         self,
@@ -1074,12 +1051,7 @@ class LinkedInScraper(BaseScraper):
         Returns:
             First matched element or ``None``.
         """
-        for selector in selectors:
-            element = await card.query_selector(selector)
-            if element is not None:
-                return element
-
-        return None
+        return await query_first(root=card, selectors=selectors)
 
     @staticmethod
     def _normalize_text(value: str) -> str | None:

@@ -11,6 +11,13 @@ from loguru import logger
 from playwright.async_api import ElementHandle, TimeoutError as PlaywrightTimeoutError
 
 from src.scrapers.base import BaseScraper
+from src.scrapers.common.cards import extract_first_text, query_first
+from src.scrapers.common.metadata import merge_non_empty
+from src.scrapers.common.selectors import (
+    extract_html_from_page_selectors,
+    extract_text_from_page_selectors,
+)
+from src.scrapers.common.text import build_short_description, normalize_whitespace
 
 
 class SeekScraper(BaseScraper):
@@ -248,14 +255,7 @@ class SeekScraper(BaseScraper):
             "subclassification": subclassification,
             "salary_text": salary_text,
         }
-        metadata.update(
-            {
-                key: value
-                for key, value in optional_fields.items()
-                if value is not None and str(value).strip() != ""
-            }
-        )
-        return metadata
+        return merge_non_empty(metadata, optional_fields)
 
     async def _collect_job_cards(self) -> list[ElementHandle]:
         """Collect job card elements from search results."""
@@ -314,18 +314,12 @@ class SeekScraper(BaseScraper):
         if self.page is None:
             raise RuntimeError("Scraper page is not initialized")
 
-        for selector in selectors:
-            element = await self.page.query_selector(selector)
-            if element is None:
-                continue
-            try:
-                raw_text = await element.inner_text()
-                normalized = self._normalize_text(raw_text)
-                if normalized:
-                    return normalized
-            except PlaywrightTimeoutError:
-                continue
-        return None
+        return await extract_text_from_page_selectors(
+            page=self.page,
+            selectors=selectors,
+            normalize_text=self._normalize_text,
+            timeout_errors=(PlaywrightTimeoutError,),
+        )
 
     async def _extract_raw_description_html(self) -> str | None:
         """Extract raw description HTML using durable selectors then fallback path."""
@@ -360,37 +354,16 @@ class SeekScraper(BaseScraper):
         if self.page is None:
             raise RuntimeError("Scraper page is not initialized")
 
-        for selector in selectors:
-            element = await self.page.query_selector(selector)
-            if element is None:
-                continue
-
-            try:
-                raw_html = await element.evaluate("node => node.outerHTML")
-                if isinstance(raw_html, str) and raw_html.strip():
-                    logger.bind(
-                        scraper=self.__class__.__name__,
-                        selector=selector,
-                        extraction_label=extraction_label,
-                    ).info("Extracted Seek raw description HTML")
-                    return raw_html.strip()
-            except PlaywrightTimeoutError:
-                logger.bind(
-                    scraper=self.__class__.__name__,
-                    selector=selector,
-                    extraction_label=extraction_label,
-                ).debug("Seek raw HTML extraction timed out")
-                continue
-            except Exception as exc:
-                logger.bind(
-                    scraper=self.__class__.__name__,
-                    selector=selector,
-                    extraction_label=extraction_label,
-                    error=str(exc),
-                ).debug("Seek raw HTML extraction failed for selector")
-                continue
-
-        return None
+        return await extract_html_from_page_selectors(
+            page=self.page,
+            selectors=selectors,
+            extraction_label=extraction_label,
+            scraper_name=self.__class__.__name__,
+            success_message="Extracted Seek raw description HTML",
+            timeout_message="Seek raw HTML extraction timed out",
+            failure_message="Seek raw HTML extraction failed for selector",
+            timeout_errors=(PlaywrightTimeoutError,),
+        )
 
     async def _extract_job_type(self) -> str | None:
         """Extract job type from work-type/classification fields."""
@@ -478,14 +451,11 @@ class SeekScraper(BaseScraper):
         selectors: tuple[str, ...],
     ) -> str | None:
         """Extract first non-empty normalized text from selector fallback list."""
-        for selector in selectors:
-            element = await root.query_selector(selector)
-            if element is None:
-                continue
-            value = self._normalize_text(await element.inner_text())
-            if value:
-                return value
-        return None
+        return await extract_first_text(
+            root=root,
+            selectors=selectors,
+            normalize_text=self._normalize_text,
+        )
 
     async def _query_first(
         self,
@@ -493,11 +463,7 @@ class SeekScraper(BaseScraper):
         selectors: tuple[str, ...],
     ) -> ElementHandle | None:
         """Return first matching child element for fallback selectors."""
-        for selector in selectors:
-            element = await root.query_selector(selector)
-            if element is not None:
-                return element
-        return None
+        return await query_first(root=root, selectors=selectors)
 
     @classmethod
     def _build_short_description(cls, description_full: str | None) -> str | None:
@@ -505,13 +471,10 @@ class SeekScraper(BaseScraper):
         if not description_full:
             return None
 
-        if len(description_full) <= cls.SHORT_DESCRIPTION_MAX_LENGTH:
-            return description_full
-
-        cutoff = description_full.rfind(" ", 0, cls.SHORT_DESCRIPTION_MAX_LENGTH)
-        if cutoff <= 0:
-            cutoff = cls.SHORT_DESCRIPTION_MAX_LENGTH
-        return f"{description_full[:cutoff].rstrip()}..."
+        return build_short_description(
+            description_full=description_full,
+            max_length=cls.SHORT_DESCRIPTION_MAX_LENGTH,
+        )
 
     @classmethod
     def _build_search_url(cls, query: str, location: str) -> str:
@@ -568,8 +531,7 @@ class SeekScraper(BaseScraper):
     @staticmethod
     def _normalize_text(value: str) -> str | None:
         """Normalize text by collapsing whitespace."""
-        normalized = " ".join(value.split())
-        return normalized if normalized else None
+        return normalize_whitespace(value)
 
 
 class SeekScraperError(RuntimeError):
