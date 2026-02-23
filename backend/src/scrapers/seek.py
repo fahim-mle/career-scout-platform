@@ -332,7 +332,6 @@ class SeekScraper(BaseScraper):
         primary_html = await self._extract_html_from_page_selectors(
             selectors=self.DESCRIPTION_HTML_SELECTORS,
             extraction_label="description_html_primary",
-            fallback_path="primary",
         )
         if primary_html:
             return primary_html
@@ -343,7 +342,6 @@ class SeekScraper(BaseScraper):
         fallback_html = await self._extract_html_from_page_selectors(
             selectors=self.DESCRIPTION_HTML_FALLBACK_SELECTORS,
             extraction_label="description_html_fallback",
-            fallback_path="fallback",
         )
         if fallback_html:
             return fallback_html
@@ -357,7 +355,6 @@ class SeekScraper(BaseScraper):
         self,
         selectors: tuple[str, ...],
         extraction_label: str,
-        fallback_path: str,
     ) -> str | None:
         """Extract raw outer HTML from first matching selector."""
         if self.page is None:
@@ -375,7 +372,6 @@ class SeekScraper(BaseScraper):
                         scraper=self.__class__.__name__,
                         selector=selector,
                         extraction_label=extraction_label,
-                        fallback_path=fallback_path,
                     ).info("Extracted Seek raw description HTML")
                     return raw_html.strip()
             except PlaywrightTimeoutError:
@@ -383,7 +379,6 @@ class SeekScraper(BaseScraper):
                     scraper=self.__class__.__name__,
                     selector=selector,
                     extraction_label=extraction_label,
-                    fallback_path=fallback_path,
                 ).debug("Seek raw HTML extraction timed out")
                 continue
             except Exception as exc:
@@ -391,7 +386,6 @@ class SeekScraper(BaseScraper):
                     scraper=self.__class__.__name__,
                     selector=selector,
                     extraction_label=extraction_label,
-                    fallback_path=fallback_path,
                     error=str(exc),
                 ).debug("Seek raw HTML extraction failed for selector")
                 continue
@@ -418,13 +412,6 @@ class SeekScraper(BaseScraper):
             if hint in lowered:
                 return hint.title()
         return None
-
-    async def _extract_salary_range(self) -> dict[str, Any] | None:
-        """Extract salary range from detail page salary blocks."""
-        salary_text = await self._extract_text_from_page_selectors(
-            self.SALARY_SELECTORS
-        )
-        return self._extract_salary_range_from_text(salary_text)
 
     def _extract_salary_range_from_text(
         self,
