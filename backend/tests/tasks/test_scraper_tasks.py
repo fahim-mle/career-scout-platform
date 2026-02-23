@@ -82,6 +82,34 @@ def make_linkedin_scraper_double(
     return FakeLinkedInScraper
 
 
+def make_seek_scraper_double(
+    scraped_jobs: list[dict[str, Any]],
+) -> type:
+    """Build a lightweight Seek scraper double for a fixed payload."""
+
+    class FakeSeekScraper:
+        def __init__(self, headless: bool, rate_limit_seconds: float) -> None:
+            self.headless = headless
+            self.rate_limit_seconds = rate_limit_seconds
+
+        async def __aenter__(self) -> "FakeSeekScraper":
+            return self
+
+        async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            del exc_type, exc, tb
+
+        async def scrape_jobs(
+            self,
+            query: str,
+            location: str,
+            limit: int,
+        ) -> list[dict[str, Any]]:
+            del query, location, limit
+            return scraped_jobs
+
+    return FakeSeekScraper
+
+
 SCRAPE_TASK_RUN = scraper_tasks.scrape_linkedin_jobs.run.__func__  # type: ignore[attr-defined]
 SEEK_SCRAPE_TASK_RUN = scraper_tasks.scrape_seek_jobs.run.__func__  # type: ignore[attr-defined]
 SEEK_PROFILE_SET_TASK_RUN = scraper_tasks.scrape_seek_profile_set.run.__func__  # type: ignore[attr-defined]
@@ -475,6 +503,31 @@ def test_build_job_update_payload_sets_missing_scraped_jobs_and_metadata() -> No
     }
 
 
+def test_build_job_update_payload_sets_meaningful_values_when_existing_is_empty() -> (
+    None
+):
+    """Helper should enrich fields when existing values are present but empty."""
+
+    existing = SimpleNamespace(
+        description_full="full",
+        description_short="short",
+        job_type="Contract",
+        scraped_jobs="",
+        platform_metadata={},
+    )
+    scraped = {
+        "scraped_jobs": '<div id="job-details">About the job</div>',
+        "platform_metadata": {"platform": "seek", "location": "Brisbane"},
+    }
+
+    result = scraper_tasks._build_job_update_payload(existing, scraped)
+
+    assert result == {
+        "scraped_jobs": '<div id="job-details">About the job</div>',
+        "platform_metadata": {"platform": "seek", "location": "Brisbane"},
+    }
+
+
 def test_normalize_scraped_payload_maps_metadata_to_platform_metadata() -> None:
     """Normalizer should map generic metadata key for ORM compatibility."""
 
@@ -599,6 +652,272 @@ def test_run_linkedin_scrape_and_persist_maps_metadata_and_persists_fields(
         "date_posted": "1 day ago",
     }
     assert "metadata" not in captured_payloads[0]
+
+
+def test_run_seek_scrape_and_persist_maps_metadata_and_persists_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seek orchestration maps metadata and persists raw fields on create."""
+    fake_scraped_jobs = [
+        {
+            "external_id": "seek-new-1",
+            "platform": "seek",
+            "url": "https://seek.com.au/job/seek-new-1",
+            "title": "Backend Engineer",
+            "company": "Career Scout",
+            "location": "Brisbane",
+            "description_full": "Full description",
+            "description_short": "Short description",
+            "scraped_jobs": '<div data-automation="jobAdDetails">Role</div>',
+            "metadata": {"platform": "seek", "date_posted": "1 day ago"},
+        }
+    ]
+
+    captured_payloads: list[dict[str, Any]] = []
+
+    class FakeJobRepository:
+        def __init__(self, db_session: Any) -> None:
+            self.db_session = db_session
+
+        async def get_by_external_id(self, external_id: str, platform: str) -> Any:
+            del external_id, platform
+            return None
+
+        async def create(self, payload: dict[str, Any]) -> Any:
+            captured_payloads.append(payload)
+            return SimpleNamespace(id=199)
+
+        async def update(self, job_id: int, payload: dict[str, Any]) -> Any:
+            del job_id, payload
+            raise AssertionError("update should not be called in create path")
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "SeekScraper",
+        make_seek_scraper_double(fake_scraped_jobs),
+    )
+    monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
+    monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
+
+    result = asyncio.run(
+        scraper_tasks._run_seek_scrape_and_persist(
+            query="python",
+            location="brisbane",
+            limit=3,
+            task_id="task-84",
+        )
+    )
+
+    assert result["created"] == 1
+    assert result["updated"] == 0
+    assert captured_payloads
+    assert (
+        captured_payloads[0]["scraped_jobs"]
+        == '<div data-automation="jobAdDetails">Role</div>'
+    )
+    assert captured_payloads[0]["platform_metadata"] == {
+        "platform": "seek",
+        "date_posted": "1 day ago",
+    }
+    assert "metadata" not in captured_payloads[0]
+
+
+def test_run_seek_scrape_and_persist_updates_empty_fields_with_meaningful_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seek update path should enrich empty persisted fields."""
+    fake_scraped_jobs = [
+        {
+            "external_id": "seek-existing-1",
+            "platform": "seek",
+            "scraped_jobs": '<div data-automation="jobAdDetails">Fresh role details</div>',
+            "metadata": {"platform": "seek", "date_posted": "Today"},
+        }
+    ]
+
+    update_payloads: list[dict[str, Any]] = []
+
+    class FakeJobRepository:
+        def __init__(self, db_session: Any) -> None:
+            self.db_session = db_session
+
+        async def get_by_external_id(self, external_id: str, platform: str) -> Any:
+            del external_id, platform
+            return SimpleNamespace(
+                id=77,
+                title="Backend Engineer",
+                description_full="existing full",
+                description_short="existing short",
+                job_type="Full-Time",
+                scraped_jobs="",
+                platform_metadata={},
+            )
+
+        async def create(self, payload: dict[str, Any]) -> Any:
+            del payload
+            raise AssertionError("create should not be called in update path")
+
+        async def update(self, job_id: int, payload: dict[str, Any]) -> Any:
+            update_payloads.append({"job_id": job_id, "payload": payload})
+            return SimpleNamespace(id=job_id)
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "SeekScraper",
+        make_seek_scraper_double(fake_scraped_jobs),
+    )
+    monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
+    monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
+
+    result = asyncio.run(
+        scraper_tasks._run_seek_scrape_and_persist(
+            query="python",
+            location="brisbane",
+            limit=3,
+            task_id="task-84",
+        )
+    )
+
+    assert result["created"] == 0
+    assert result["updated"] == 1
+    assert result["duplicates"] == 0
+    assert len(update_payloads) == 1
+    assert update_payloads[0]["job_id"] == 77
+    assert update_payloads[0]["payload"] == {
+        "scraped_jobs": '<div data-automation="jobAdDetails">Fresh role details</div>',
+        "platform_metadata": {"platform": "seek", "date_posted": "Today"},
+    }
+
+
+def test_run_seek_scrape_and_persist_skips_empty_values_for_non_empty_existing_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seek update path should not overwrite existing values with empty payloads."""
+    fake_scraped_jobs = [
+        {
+            "external_id": "seek-existing-2",
+            "platform": "seek",
+            "scraped_jobs": "   ",
+            "metadata": {},
+        }
+    ]
+
+    update_called = False
+
+    class FakeJobRepository:
+        def __init__(self, db_session: Any) -> None:
+            self.db_session = db_session
+
+        async def get_by_external_id(self, external_id: str, platform: str) -> Any:
+            del external_id, platform
+            return SimpleNamespace(
+                id=88,
+                title="Backend Engineer",
+                description_full="existing full",
+                description_short="existing short",
+                job_type="Full-Time",
+                scraped_jobs='<div data-automation="jobAdDetails">Existing details</div>',
+                platform_metadata={"platform": "seek", "date_posted": "Yesterday"},
+            )
+
+        async def create(self, payload: dict[str, Any]) -> Any:
+            del payload
+            raise AssertionError("create should not be called in update path")
+
+        async def update(self, job_id: int, payload: dict[str, Any]) -> Any:
+            del job_id, payload
+            nonlocal update_called
+            update_called = True
+            raise AssertionError("update should not be called for empty values")
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "SeekScraper",
+        make_seek_scraper_double(fake_scraped_jobs),
+    )
+    monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
+    monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
+
+    result = asyncio.run(
+        scraper_tasks._run_seek_scrape_and_persist(
+            query="python",
+            location="brisbane",
+            limit=3,
+            task_id="task-84",
+        )
+    )
+
+    assert result["created"] == 0
+    assert result["updated"] == 0
+    assert result["duplicates"] == 1
+    assert update_called is False
+
+
+def test_run_seek_scrape_and_persist_does_not_overwrite_existing_enriched_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seek update path should not overwrite already-populated enrichment fields."""
+    fake_scraped_jobs = [
+        {
+            "external_id": "seek-existing-3",
+            "platform": "seek",
+            "scraped_jobs": '<div data-automation="jobAdDetails">New details</div>',
+            "metadata": {"platform": "seek", "date_posted": "Today"},
+            "description_full": "new full description",
+        }
+    ]
+
+    update_called = False
+
+    class FakeJobRepository:
+        def __init__(self, db_session: Any) -> None:
+            self.db_session = db_session
+
+        async def get_by_external_id(self, external_id: str, platform: str) -> Any:
+            del external_id, platform
+            return SimpleNamespace(
+                id=98,
+                title="Backend Engineer",
+                description_full="existing full",
+                description_short="existing short",
+                job_type="Full-Time",
+                scraped_jobs='<div data-automation="jobAdDetails">Existing details</div>',
+                platform_metadata={"platform": "seek", "date_posted": "Yesterday"},
+            )
+
+        async def create(self, payload: dict[str, Any]) -> Any:
+            del payload
+            raise AssertionError("create should not be called in update path")
+
+        async def update(self, job_id: int, payload: dict[str, Any]) -> Any:
+            del job_id, payload
+            nonlocal update_called
+            update_called = True
+            raise AssertionError(
+                "update should not be called when values already exist"
+            )
+
+    monkeypatch.setattr(
+        scraper_tasks,
+        "SeekScraper",
+        make_seek_scraper_double(fake_scraped_jobs),
+    )
+    monkeypatch.setattr(scraper_tasks, "get_session", lambda: DummySessionContext())
+    monkeypatch.setattr(scraper_tasks, "JobRepository", FakeJobRepository)
+
+    result = asyncio.run(
+        scraper_tasks._run_seek_scrape_and_persist(
+            query="python",
+            location="brisbane",
+            limit=3,
+            task_id="task-84",
+        )
+    )
+
+    assert result["created"] == 0
+    assert result["updated"] == 0
+    assert result["duplicates"] == 1
+    assert update_called is False
 
 
 def test_build_job_update_payload_updates_title_when_duplicate_artifact_corrected() -> (

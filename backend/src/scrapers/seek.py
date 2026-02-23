@@ -46,6 +46,17 @@ class SeekScraper(BaseScraper):
         'div[data-automation="jobAdDetails"]',
         'div[data-automation="job-description"]',
     )
+    DESCRIPTION_HTML_SELECTORS = (
+        'article[data-automation="jobAdDetails"]',
+        'section[data-automation="jobAdDetails"]',
+        'div[data-automation="jobAdDetails"]',
+        'div[data-automation="job-description"]',
+    )
+    DESCRIPTION_HTML_FALLBACK_SELECTORS = (
+        "main",
+        "article",
+        '[data-testid="job-details"]',
+    )
     CLASSIFICATIONS_SELECTORS = (
         '*[data-automation="job-detail-classifications"]',
         '*[data-automation="jobClassifications"]',
@@ -57,6 +68,11 @@ class SeekScraper(BaseScraper):
     LOCATION_DETAIL_SELECTORS = (
         '*[data-automation="job-detail-location"]',
         '*[data-automation="jobDetailLocation"]',
+    )
+    DATE_POSTED_SELECTORS = (
+        '*[data-automation="job-detail-date"]',
+        '*[data-automation="jobDetailDate"]',
+        '*[data-automation="jobDate"]',
     )
     SALARY_SELECTORS = (
         '*[data-automation="job-detail-salary"]',
@@ -156,16 +172,30 @@ class SeekScraper(BaseScraper):
         description_full = self._normalize_text(description_full or "")
         description_short = self._build_short_description(description_full)
 
+        raw_description_html: str | None = None
+        try:
+            raw_description_html = await self._extract_raw_description_html()
+        except Exception as exc:
+            logger.bind(
+                scraper=self.__class__.__name__,
+                url=job_url,
+                error=str(exc),
+            ).warning("Failed Seek raw description HTML extraction")
+
         details: dict[str, Any] = {}
         if description_full:
             details["description_full"] = description_full
             details["description_short"] = description_short
+        details["scraped_jobs"] = raw_description_html
 
         job_type = await self._extract_job_type()
         if job_type:
             details["job_type"] = job_type
 
-        salary_range = await self._extract_salary_range()
+        salary_text = await self._extract_text_from_page_selectors(
+            selectors=self.SALARY_SELECTORS
+        )
+        salary_range = self._extract_salary_range_from_text(salary_text)
         if salary_range:
             details["salary_range"] = salary_range
 
@@ -175,7 +205,57 @@ class SeekScraper(BaseScraper):
         if location_detail:
             details["location"] = location_detail
 
+        details["metadata"] = await self._extract_seek_metadata(
+            location=location_detail,
+            work_type=job_type,
+            salary_text=salary_text,
+        )
+
         return details
+
+    async def _extract_seek_metadata(
+        self,
+        location: str | None,
+        work_type: str | None,
+        salary_text: str | None,
+    ) -> dict[str, Any]:
+        """Extract Seek metadata into generic payload keys.
+
+        Args:
+            location: Optional location text extracted from detail page.
+            work_type: Optional work type text inferred from detail selectors.
+            salary_text: Optional raw salary text extracted from detail selectors.
+
+        Returns:
+            Metadata dictionary containing platform and available Seek fields.
+        """
+        date_posted = await self._extract_text_from_page_selectors(
+            selectors=self.DATE_POSTED_SELECTORS
+        )
+        classifications = await self._extract_text_from_page_selectors(
+            selectors=self.CLASSIFICATIONS_SELECTORS
+        )
+        classification, subclassification = self._extract_classification_parts(
+            classifications
+        )
+
+        metadata: dict[str, Any] = {"platform": self.PLATFORM}
+        optional_fields = {
+            "location": location,
+            "date_posted": date_posted,
+            "work_type": work_type,
+            "classification": classification,
+            "subclassification": subclassification,
+            "salary_text": salary_text,
+        }
+        metadata.update(
+            {
+                key: value
+                for key, value in optional_fields.items()
+                if value is not None and str(value).strip() != ""
+            }
+        )
+        return metadata
 
     async def _collect_job_cards(self) -> list[ElementHandle]:
         """Collect job card elements from search results."""
@@ -247,6 +327,77 @@ class SeekScraper(BaseScraper):
                 continue
         return None
 
+    async def _extract_raw_description_html(self) -> str | None:
+        """Extract raw description HTML using durable selectors then fallback path."""
+        primary_html = await self._extract_html_from_page_selectors(
+            selectors=self.DESCRIPTION_HTML_SELECTORS,
+            extraction_label="description_html_primary",
+            fallback_path="primary",
+        )
+        if primary_html:
+            return primary_html
+
+        logger.bind(scraper=self.__class__.__name__).info(
+            "Seek description HTML primary selectors missed; trying fallback"
+        )
+        fallback_html = await self._extract_html_from_page_selectors(
+            selectors=self.DESCRIPTION_HTML_FALLBACK_SELECTORS,
+            extraction_label="description_html_fallback",
+            fallback_path="fallback",
+        )
+        if fallback_html:
+            return fallback_html
+
+        logger.bind(scraper=self.__class__.__name__).info(
+            "Seek description HTML not found across selector chain"
+        )
+        return None
+
+    async def _extract_html_from_page_selectors(
+        self,
+        selectors: tuple[str, ...],
+        extraction_label: str,
+        fallback_path: str,
+    ) -> str | None:
+        """Extract raw outer HTML from first matching selector."""
+        if self.page is None:
+            raise RuntimeError("Scraper page is not initialized")
+
+        for selector in selectors:
+            element = await self.page.query_selector(selector)
+            if element is None:
+                continue
+
+            try:
+                raw_html = await element.evaluate("node => node.outerHTML")
+                if isinstance(raw_html, str) and raw_html.strip():
+                    logger.bind(
+                        scraper=self.__class__.__name__,
+                        selector=selector,
+                        extraction_label=extraction_label,
+                        fallback_path=fallback_path,
+                    ).info("Extracted Seek raw description HTML")
+                    return raw_html.strip()
+            except PlaywrightTimeoutError:
+                logger.bind(
+                    scraper=self.__class__.__name__,
+                    selector=selector,
+                    extraction_label=extraction_label,
+                    fallback_path=fallback_path,
+                ).debug("Seek raw HTML extraction timed out")
+                continue
+            except Exception as exc:
+                logger.bind(
+                    scraper=self.__class__.__name__,
+                    selector=selector,
+                    extraction_label=extraction_label,
+                    fallback_path=fallback_path,
+                    error=str(exc),
+                ).debug("Seek raw HTML extraction failed for selector")
+                continue
+
+        return None
+
     async def _extract_job_type(self) -> str | None:
         """Extract job type from work-type/classification fields."""
         work_type = await self._extract_text_from_page_selectors(
@@ -273,6 +424,20 @@ class SeekScraper(BaseScraper):
         salary_text = await self._extract_text_from_page_selectors(
             self.SALARY_SELECTORS
         )
+        return self._extract_salary_range_from_text(salary_text)
+
+    def _extract_salary_range_from_text(
+        self,
+        salary_text: str | None,
+    ) -> dict[str, Any] | None:
+        """Extract salary range from salary text.
+
+        Args:
+            salary_text: Raw salary text from detail page.
+
+        Returns:
+            Structured salary payload when min/max values are found.
+        """
         if not salary_text:
             return None
 
@@ -293,6 +458,32 @@ class SeekScraper(BaseScraper):
             "currency": "AUD",
             "raw": salary_text,
         }
+
+    @classmethod
+    def _extract_classification_parts(
+        cls,
+        value: str | None,
+    ) -> tuple[str | None, str | None]:
+        """Split classification text into classification/subclassification.
+
+        Args:
+            value: Raw classification text from detail page.
+
+        Returns:
+            Tuple of ``(classification, subclassification)`` values.
+        """
+        normalized = cls._normalize_text(value or "")
+        if not normalized:
+            return (None, None)
+
+        for delimiter in (" / ", " - ", " | ", ": "):
+            if delimiter in normalized:
+                left, right = normalized.split(delimiter, maxsplit=1)
+                classification = cls._normalize_text(left)
+                subclassification = cls._normalize_text(right)
+                return (classification, subclassification)
+
+        return (normalized, None)
 
     async def _extract_first_text(
         self,
