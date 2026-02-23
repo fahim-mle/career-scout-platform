@@ -38,8 +38,13 @@ class _FakeElement:
 class _FakePage:
     """Minimal fake Playwright page for selector extraction tests."""
 
-    def __init__(self, elements: dict[str, _FakeElement]) -> None:
+    def __init__(
+        self,
+        elements: dict[str, _FakeElement],
+        elements_all: dict[str, list[_FakeElement]] | None = None,
+    ) -> None:
         self._elements = elements
+        self._elements_all = elements_all or {}
 
     async def goto(self, url: str, wait_until: str) -> None:
         """Simulate page navigation call for scrape_job_details."""
@@ -48,6 +53,10 @@ class _FakePage:
     async def query_selector(self, selector: str) -> _FakeElement | None:
         """Return mapped fake element for selector or ``None``."""
         return self._elements.get(selector)
+
+    async def query_selector_all(self, selector: str) -> list[_FakeElement]:
+        """Return mapped fake element list for selector or empty list."""
+        return self._elements_all.get(selector, [])
 
 
 def test_extract_external_id_prefers_data_jk() -> None:
@@ -101,8 +110,8 @@ def test_extract_job_type_from_text_detects_contract() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scrape_job_details_extracts_raw_description_html() -> None:
-    """Detail scraping should include raw description HTML in scraped_jobs."""
+async def test_scrape_job_details_extracts_full_metadata_payload() -> None:
+    """Detail scraping should include all requested metadata keys when present."""
     html_block = '<div id="jobDescriptionText"><p>Build robust APIs</p></div>'
     scraper = IndeedScraper()
     scraper.page = cast(
@@ -111,8 +120,23 @@ async def test_scrape_job_details_extracts_raw_description_html() -> None:
             elements={
                 "#jobDescriptionText": _FakeElement(
                     text="Build robust APIs", outer_html=html_block
-                )
-            }
+                ),
+                "#salaryInfoAndJobType": _FakeElement(
+                    text="$120k - $150k per year · Full-time"
+                ),
+                '[data-testid="job-location"]': _FakeElement(text="Sydney NSW"),
+                '[data-testid="jobsearch-JobMetadataFooter"]': _FakeElement(
+                    text="Posted 2 days ago"
+                ),
+                '[data-testid="company-rating"]': _FakeElement(text="4.2/5"),
+            },
+            elements_all={
+                '[data-testid="benefitItem"]': [
+                    _FakeElement(text="Health insurance"),
+                    _FakeElement(text="Work from home"),
+                    _FakeElement(text="Health insurance"),
+                ]
+            },
         ),
     )
 
@@ -126,6 +150,15 @@ async def test_scrape_job_details_extracts_raw_description_html() -> None:
     assert details["description_full"] == "Build robust APIs"
     assert details["description_short"] == "Build robust APIs"
     assert details["scraped_jobs"] == html_block
+    assert details["metadata"] == {
+        "platform": "indeed",
+        "location": "Sydney NSW",
+        "date_posted": "Posted 2 days ago",
+        "work_type": "Full-Time",
+        "salary_text": "$120k - $150k per year · Full-time",
+        "company_rating": "4.2/5",
+        "benefits": ["Health insurance", "Work from home"],
+    }
 
 
 @pytest.mark.asyncio
@@ -154,11 +187,41 @@ async def test_scrape_job_details_sets_scraped_jobs_none_when_html_missing() -> 
     assert details["description_full"] == "Text extraction still works"
     assert details["description_short"] == "Text extraction still works"
     assert details["scraped_jobs"] is None
+    assert details["metadata"] == {"platform": "indeed"}
 
 
 @pytest.mark.asyncio
-async def test_scrape_job_details_keeps_existing_text_behavior() -> None:
-    """Detail scraping should preserve description truncation behavior."""
+async def test_scrape_job_details_extracts_sparse_metadata_payload() -> None:
+    """Detail scraping should include only metadata keys available in page markup."""
+    scraper = IndeedScraper()
+    scraper.page = cast(
+        Any,
+        _FakePage(
+            elements={
+                "#jobDescriptionText": _FakeElement(text="Minimal metadata page"),
+                '[data-testid="jobsearch-JobMetadataFooter"]': _FakeElement(
+                    text="Posted today"
+                ),
+            }
+        ),
+    )
+
+    async def noop_rate_limit(seconds: float | None = None) -> None:
+        del seconds
+
+    scraper.rate_limit = noop_rate_limit  # type: ignore[method-assign]
+
+    details = await scraper.scrape_job_details("https://au.indeed.com/viewjob?jk=abc")
+
+    assert details["metadata"] == {
+        "platform": "indeed",
+        "date_posted": "Posted today",
+    }
+
+
+@pytest.mark.asyncio
+async def test_scrape_job_details_keeps_core_fields_behavior() -> None:
+    """Detail scraping should preserve core field extraction behavior."""
     long_text = " ".join(["indeed"] * 200)
     scraper = IndeedScraper()
     scraper.page = cast(
@@ -168,7 +231,10 @@ async def test_scrape_job_details_keeps_existing_text_behavior() -> None:
                 "#jobDescriptionText": _FakeElement(
                     text=long_text,
                     outer_html='<div id="jobDescriptionText"><p>indeed</p></div>',
-                )
+                ),
+                "#salaryInfoAndJobType": _FakeElement(
+                    text="$100k - $130k per year · Contract"
+                ),
             }
         ),
     )
@@ -187,3 +253,10 @@ async def test_scrape_job_details_keeps_existing_text_behavior() -> None:
         len(details["description_short"])
         <= IndeedScraper.SHORT_DESCRIPTION_MAX_LENGTH + 3
     )
+    assert details["salary_range"] == {
+        "min": 100000,
+        "max": 130000,
+        "currency": "AUD",
+        "raw": "$100k - $130k per year · Contract",
+    }
+    assert details["job_type"] == "Contract"

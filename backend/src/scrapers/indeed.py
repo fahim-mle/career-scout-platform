@@ -67,6 +67,33 @@ class IndeedScraper(BaseScraper):
         '[data-testid="salaryInfoAndJobType"]',
         "div.jobsearch-JobMetadataHeader-item",
     )
+    METADATA_LOCATION_SELECTORS = (
+        '[data-testid="job-location"]',
+        '[data-testid="text-location"]',
+        'div[data-testid="jobsearch-JobInfoHeader-subtitle"] div',
+        "div.jobsearch-JobInfoHeader-subtitle div",
+    )
+    DATE_POSTED_SELECTORS = (
+        '[data-testid="jobsearch-JobMetadataFooter"]',
+        "div.jobsearch-JobMetadataFooter",
+        '[data-testid="myJobsStateDate"]',
+        "span.date",
+    )
+    SALARY_TEXT_SELECTORS = (
+        '#salaryInfoAndJobType span:has-text("$")',
+        '[data-testid="salaryInfoAndJobType"]',
+        "div.jobsearch-JobMetadataHeader-item",
+    )
+    COMPANY_RATING_SELECTORS = (
+        '[data-testid="company-rating"]',
+        "span.icl-Ratings-starsCountWrapper",
+        "div.jobsearch-CompanyReview--heading",
+    )
+    BENEFITS_ITEM_SELECTORS = (
+        '[data-testid="benefitItem"]',
+        "ul#benefits li",
+        'section[data-testid="benefits"] li',
+    )
     HEADER_JOB_TYPE_SELECTORS = (
         "div.jobsearch-JobMetadataHeader-item",
         '[data-testid="jobsearch-JobMetadataHeader-item"]',
@@ -234,7 +261,73 @@ class IndeedScraper(BaseScraper):
         if job_type:
             details["job_type"] = job_type
 
+        metadata = await self._extract_metadata(
+            salary_type_text=salary_type_text,
+            job_type=job_type,
+        )
+        details["metadata"] = metadata
+
         return details
+
+    async def _extract_metadata(
+        self,
+        salary_type_text: str | None,
+        job_type: str | None,
+    ) -> dict[str, Any]:
+        """Extract structured metadata from Indeed detail page.
+
+        Args:
+            salary_type_text: Optional salary/type container text.
+            job_type: Optional parsed job type from helper extraction.
+
+        Returns:
+            JSON-serializable metadata dictionary with available keys.
+        """
+        metadata: dict[str, Any] = {"platform": self.PLATFORM}
+
+        location_text = await self._extract_text_from_page_selectors(
+            selectors=self.METADATA_LOCATION_SELECTORS
+        )
+        if location_text:
+            metadata["location"] = location_text
+
+        date_posted_text = await self._extract_text_from_page_selectors(
+            selectors=self.DATE_POSTED_SELECTORS
+        )
+        if date_posted_text:
+            metadata["date_posted"] = date_posted_text
+
+        work_type = job_type
+        if not work_type and salary_type_text:
+            work_type = self._extract_job_type_from_text(salary_type_text)
+        if not work_type:
+            work_type_text = await self._extract_text_from_page_selectors(
+                selectors=self.HEADER_JOB_TYPE_SELECTORS
+            )
+            if work_type_text:
+                work_type = self._extract_job_type_from_text(work_type_text)
+        if work_type:
+            metadata["work_type"] = work_type
+
+        salary_text = self._extract_salary_text(salary_type_text)
+        if not salary_text:
+            salary_text = self._extract_salary_text(
+                await self._extract_text_from_page_selectors(
+                    selectors=self.SALARY_TEXT_SELECTORS
+                )
+            )
+        if salary_text:
+            metadata["salary_text"] = salary_text
+
+        company_rating = await self._extract_company_rating()
+        if company_rating:
+            metadata["company_rating"] = company_rating
+
+        benefits = await self._extract_benefits()
+        if benefits:
+            metadata["benefits"] = benefits
+
+        return metadata
 
     async def _extract_raw_description_html(self) -> str | None:
         """Extract raw description HTML using stable selectors then fallback path.
@@ -509,6 +602,96 @@ class IndeedScraper(BaseScraper):
                 ).debug("Indeed raw HTML extraction failed for selector")
                 continue
 
+        return None
+
+    async def _extract_company_rating(self) -> str | None:
+        """Extract normalized company rating text from detail page.
+
+        Returns:
+            Company rating string when available, otherwise ``None``.
+
+        Raises:
+            RuntimeError: If scraper page is not initialized.
+        """
+        rating_text = await self._extract_text_from_page_selectors(
+            selectors=self.COMPANY_RATING_SELECTORS
+        )
+        if not rating_text:
+            return None
+
+        match = re.search(r"\b\d(?:\.\d)?\s*/\s*5\b", rating_text)
+        if match:
+            return self._normalize_text(match.group(0))
+        return rating_text
+
+    async def _extract_benefits(self) -> list[str] | None:
+        """Extract benefits list from detail page selectors.
+
+        Returns:
+            Ordered list of benefits when found, otherwise ``None``.
+
+        Raises:
+            RuntimeError: If scraper page is not initialized.
+        """
+        if self.page is None:
+            raise RuntimeError("Scraper page is not initialized")
+
+        for selector in self.BENEFITS_ITEM_SELECTORS:
+            elements = await self.page.query_selector_all(selector)
+            if not elements:
+                continue
+
+            values: list[str] = []
+            for element in elements:
+                try:
+                    text_value = await element.inner_text()
+                except Exception:
+                    continue
+                normalized = self._normalize_text(text_value)
+                if normalized:
+                    values.append(normalized)
+
+            unique_values = self._dedupe_preserve_order(values)
+            if unique_values:
+                return unique_values
+
+        return None
+
+    @staticmethod
+    def _dedupe_preserve_order(values: list[str]) -> list[str]:
+        """Return unique values while preserving original order.
+
+        Args:
+            values: Raw string values.
+
+        Returns:
+            Deduplicated list with deterministic ordering.
+        """
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if value in seen:
+                continue
+            deduped.append(value)
+            seen.add(value)
+        return deduped
+
+    @classmethod
+    def _extract_salary_text(cls, value: str | None) -> str | None:
+        """Extract a salary-like text snippet from mixed metadata text.
+
+        Args:
+            value: Candidate metadata text.
+
+        Returns:
+            Normalized salary text when detected, otherwise ``None``.
+        """
+        normalized = cls._normalize_text(value or "")
+        if not normalized:
+            return None
+
+        if "$" in normalized or "aud" in normalized.lower():
+            return normalized
         return None
 
     @classmethod
