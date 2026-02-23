@@ -38,7 +38,7 @@ def build_short_description(
 
     summary_text = (
         normalizer(description_full)
-        if normalizer is not None
+        if callable(normalizer)
         else normalize_whitespace(description_full)
     )
     if not summary_text:
