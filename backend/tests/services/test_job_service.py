@@ -37,7 +37,7 @@ def make_job(**overrides: Any) -> SimpleNamespace:
         "job_type": None,
         "description_short": "Short text",
         "description_full": "Longer full description",
-        "scraped_jobs": None,
+        "raw_html": None,
         "platform_metadata": None,
         "posted_date": date.today(),
         "scraped_at": now,
@@ -284,7 +284,7 @@ async def test_create_job_accepts_optional_platform_metadata() -> None:
         title="Backend Engineer",
         company="Acme",
         location="Brisbane",
-        scraped_jobs="raw block",
+        raw_html="raw block",
         metadata={
             "platform": "linkedin",
             "posted_date_text": "1 week ago",
@@ -296,7 +296,7 @@ async def test_create_job_accepts_optional_platform_metadata() -> None:
 
     result = await service.create_job(payload)
 
-    assert result.scraped_jobs == "raw block"
+    assert result.raw_html == "raw block"
     assert result.metadata == {
         "platform": "linkedin",
         "posted_date_text": "1 week ago",
@@ -315,7 +315,7 @@ async def test_update_job_accepts_raw_html_and_generic_metadata_alias() -> None:
     result = await service.update_job(
         1,
         JobUpdate(
-            scraped_jobs="<section><p>raw detail html</p></section>",
+            raw_html="<section><p>raw detail html</p></section>",
             metadata={
                 "platform": "linkedin",
                 "location": "Remote",
@@ -324,7 +324,7 @@ async def test_update_job_accepts_raw_html_and_generic_metadata_alias() -> None:
         ),
     )
 
-    assert result.scraped_jobs == "<section><p>raw detail html</p></section>"
+    assert result.raw_html == "<section><p>raw detail html</p></section>"
     assert result.metadata == {
         "platform": "linkedin",
         "location": "Remote",

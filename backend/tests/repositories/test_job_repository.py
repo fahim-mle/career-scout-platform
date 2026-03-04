@@ -195,7 +195,7 @@ async def test_update_persists_raw_html_and_metadata_fields(
     updated = await repo.update(
         job.id,
         {
-            "scraped_jobs": "<main><p>About the job</p></main>",
+            "raw_html": "<main><p>About the job</p></main>",
             "platform_metadata": {
                 "platform": "linkedin",
                 "location": "Sydney",
@@ -205,7 +205,7 @@ async def test_update_persists_raw_html_and_metadata_fields(
     )
 
     assert updated is not None
-    assert updated.scraped_jobs == "<main><p>About the job</p></main>"
+    assert updated.raw_html == "<main><p>About the job</p></main>"
     assert updated.platform_metadata == {
         "platform": "linkedin",
         "location": "Sydney",
@@ -379,7 +379,7 @@ async def test_create_accepts_optional_json_and_dates(db_session: AsyncSession) 
         "posted_date": date(2026, 2, 1),
         "skills": ["Python", "SQLAlchemy"],
         "salary_range": {"min": 100000, "max": 140000, "currency": "AUD"},
-        "scraped_jobs": "raw linkedin payload",
+        "raw_html": "raw linkedin payload",
         "platform_metadata": {
             "posted_date_text": "2 days ago",
             "number_of_applicants": "37 applicants",
@@ -394,7 +394,7 @@ async def test_create_accepts_optional_json_and_dates(db_session: AsyncSession) 
     assert created.posted_date == date(2026, 2, 1)
     assert created.skills == ["Python", "SQLAlchemy"]
     assert created.salary_range == {"min": 100000, "max": 140000, "currency": "AUD"}
-    assert created.scraped_jobs == "raw linkedin payload"
+    assert created.raw_html == "raw linkedin payload"
     assert created.platform_metadata == {
         "posted_date_text": "2 days ago",
         "number_of_applicants": "37 applicants",

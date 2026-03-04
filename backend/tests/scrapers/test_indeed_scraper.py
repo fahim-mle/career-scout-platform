@@ -228,12 +228,12 @@ async def test_scrape_job_details_extracts_full_metadata_payload() -> None:
 
     details = await scraper.scrape_job_details("https://au.indeed.com/viewjob?jk=abc")
 
-    assert {"description_full", "description_short", "scraped_jobs", "metadata"} <= set(
+    assert {"description_full", "description_short", "raw_html", "metadata"} <= set(
         details.keys()
     )
     assert details["description_full"] == "Build robust APIs"
     assert details["description_short"] == "Build robust APIs"
-    assert details["scraped_jobs"] == html_block
+    assert details["raw_html"] == html_block
     assert details["metadata"] == {
         "platform": "indeed",
         "location": "Sydney NSW",
@@ -246,7 +246,7 @@ async def test_scrape_job_details_extracts_full_metadata_payload() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scrape_job_details_omits_scraped_jobs_when_html_missing() -> None:
+async def test_scrape_job_details_omits_raw_html_when_html_missing() -> None:
     """Detail scraping should omit raw HTML key when extraction misses."""
     scraper = IndeedScraper()
     scraper.page = cast(
@@ -270,7 +270,7 @@ async def test_scrape_job_details_omits_scraped_jobs_when_html_missing() -> None
 
     assert details["description_full"] == "Text extraction still works"
     assert details["description_short"] == "Text extraction still works"
-    assert "scraped_jobs" not in details
+    assert "raw_html" not in details
     assert details["metadata"] == {"platform": "indeed"}
 
 
@@ -301,7 +301,7 @@ async def test_scrape_job_details_extracts_raw_html_from_fallback_selector() -> 
     )
 
     assert details["description_full"] == "Fallback indeed details"
-    assert details["scraped_jobs"] == fallback_html
+    assert details["raw_html"] == fallback_html
     assert details["metadata"] == {"platform": "indeed"}
 
 

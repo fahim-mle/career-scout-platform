@@ -489,8 +489,7 @@ async def test_scrape_job_details_includes_baseline_detail_payload_keys() -> Non
     assert details["description_full"] == "About the job Build resilient APIs"
     assert details["description_short"] == "About the job Build resilient APIs"
     assert (
-        details["scraped_jobs"]
-        == '<div id="job-details"><p>Build resilient APIs</p></div>'
+        details["raw_html"] == '<div id="job-details"><p>Build resilient APIs</p></div>'
     )
     assert details["metadata"]["platform"] == "linkedin"
 

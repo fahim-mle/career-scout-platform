@@ -30,7 +30,7 @@ ENRICHED_REQUIRED_FIELDS = {
     "location",
     "description_short",
     "description_full",
-    "scraped_jobs",
+    "raw_html",
     "metadata",
     "posted_date",
     "scraped_at",
@@ -126,7 +126,7 @@ class TestJobsAPI:
         self, client: AsyncClient
     ) -> None:
         payload = build_job_payload("api-create-meta-1")
-        payload["scraped_jobs"] = "<div id='job-details'><p>Role Overview</p></div>"
+        payload["raw_html"] = "<div id='job-details'><p>Role Overview</p></div>"
         payload["metadata"] = {
             "platform": "linkedin",
             "posted_date_text": "1 day ago",
@@ -139,7 +139,7 @@ class TestJobsAPI:
 
         assert response.status_code == 201
         body = response.json()
-        assert body["scraped_jobs"] == payload["scraped_jobs"]
+        assert body["raw_html"] == payload["raw_html"]
         assert body["metadata"] == payload["metadata"]
 
     @pytest.mark.asyncio
@@ -150,7 +150,7 @@ class TestJobsAPI:
         payload = build_job_payload("api-contract-meta-1")
         payload["description_short"] = "Short summary"
         payload["description_full"] = "Long description"
-        payload["scraped_jobs"] = "<main><p>raw html</p></main>"
+        payload["raw_html"] = "<main><p>raw html</p></main>"
         payload["metadata"] = {
             "platform": "linkedin",
             "location": "Brisbane",
@@ -207,7 +207,7 @@ class TestJobsAPI:
             "currency": "AUD",
             "raw": "$140k - $170k + super",
         }
-        payload["scraped_jobs"] = (
+        payload["raw_html"] = (
             '<div data-automation="jobAdDetails"><p>Seek details</p></div>'
         )
         payload["metadata"] = {
@@ -225,7 +225,7 @@ class TestJobsAPI:
         created = create_response.json()
         job_id = created["id"]
         assert created["platform"] == "seek"
-        assert created["scraped_jobs"] == payload["scraped_jobs"]
+        assert created["raw_html"] == payload["raw_html"]
         assert created["metadata"] == payload["metadata"]
         assert created["salary_range"] == payload["salary_range"]
 
@@ -242,7 +242,7 @@ class TestJobsAPI:
         assert "metadata" in enriched_body
         assert raw_body["platform"] == "seek"
         assert raw_body["salary_range"] == payload["salary_range"]
-        assert raw_body["scraped_jobs"] == payload["scraped_jobs"]
+        assert raw_body["raw_html"] == payload["raw_html"]
         assert raw_body["metadata"] == payload["metadata"]
 
     @pytest.mark.asyncio
@@ -264,9 +264,7 @@ class TestJobsAPI:
             "currency": "AUD",
             "raw": "$125k - $155k per year",
         }
-        payload["scraped_jobs"] = (
-            '<div id="jobDescriptionText"><p>Indeed details</p></div>'
-        )
+        payload["raw_html"] = '<div id="jobDescriptionText"><p>Indeed details</p></div>'
         payload["metadata"] = {
             "platform": "indeed",
             "location": "Brisbane QLD",
@@ -283,7 +281,7 @@ class TestJobsAPI:
         created = create_response.json()
         job_id = created["id"]
         assert created["platform"] == "indeed"
-        assert created["scraped_jobs"] == payload["scraped_jobs"]
+        assert created["raw_html"] == payload["raw_html"]
         assert created["metadata"] == payload["metadata"]
         assert created["salary_range"] == payload["salary_range"]
 
@@ -300,7 +298,7 @@ class TestJobsAPI:
         assert "metadata" in enriched_body
         assert raw_body["platform"] == "indeed"
         assert raw_body["salary_range"] == payload["salary_range"]
-        assert raw_body["scraped_jobs"] == payload["scraped_jobs"]
+        assert raw_body["raw_html"] == payload["raw_html"]
         assert raw_body["metadata"] == payload["metadata"]
 
     @pytest.mark.asyncio
@@ -697,11 +695,11 @@ class TestJobsAPI:
         assert response.status_code == 422
 
     @pytest.mark.asyncio
-    async def test_create_job_rejects_oversized_scraped_jobs_payload(
+    async def test_create_job_rejects_oversized_raw_html_payload(
         self, client: AsyncClient
     ) -> None:
         payload = build_job_payload("api-invalid-scraped-jobs-1")
-        payload["scraped_jobs"] = "x" * 100_001
+        payload["raw_html"] = "x" * 100_001
 
         response = await client.post("/api/v1/jobs", json=payload)
 
