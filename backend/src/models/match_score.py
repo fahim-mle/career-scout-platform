@@ -64,6 +64,7 @@ class MatchScore(BaseModel):
         nullable=False,
         server_default=func.now(),
     )
+    scorer_version: Mapped[str | None] = mapped_column(String(100))
 
     @validates("relevance_score")
     def validate_relevance_score(self, key: str, value: int) -> int:

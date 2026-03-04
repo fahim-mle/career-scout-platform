@@ -138,6 +138,7 @@ class MatchService:
             score = self._validate_score(llm_payload)
             explanation = self._validate_explanation(llm_payload)
             category = self._determine_category(score)
+            scorer_version = self._build_scorer_version()
             record = await self.match_repo.upsert_by_job_and_profile(
                 job_id=job_id,
                 profile_id=profile_id,
@@ -146,6 +147,7 @@ class MatchService:
                     "category": category,
                     "explanation": explanation,
                     "scored_at": datetime.now(timezone.utc),
+                    "scorer_version": scorer_version,
                 },
             )
         except RepositoryError as exc:
@@ -593,6 +595,30 @@ class MatchService:
 
         normalized = value.strip()
         return normalized or None
+
+    def _build_scorer_version(self) -> str | None:
+        """Build a scorer version string from the configured LLM client.
+
+        Combines the provider class name and the model name (e.g.
+        ``OllamaClient/llama3.2:3b``) so that each match score row records
+        exactly which model produced it.
+
+        Returns:
+            Scorer version string, or ``None`` if the model name cannot be
+            determined.
+        """
+        model = getattr(self.llm_client, "model", None)
+        if not isinstance(model, str) or not model.strip():
+            logger.bind(
+                service=self.__class__.__name__,
+                operation="_build_scorer_version",
+            ).warning("LLM client has no model attribute; scorer_version will be None")
+            return None
+
+        provider = type(self.llm_client).__name__
+        version = f"{provider}/{model.strip()}"
+        # Truncate to the column's String(100) limit
+        return version[:100]
 
     def _determine_category(self, score: int) -> str:
         """Map numeric relevance score into canonical category label.
