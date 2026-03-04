@@ -38,12 +38,17 @@ class JobEnrichment(BaseModel):
             "salary_min IS NULL OR salary_max IS NULL OR salary_min <= salary_max",
             name="ck_job_enrichments_salary_min_lte_salary_max",
         ),
+        CheckConstraint(
+            "status IN ('pending', 'completed', 'failed', 'stale')",
+            name="ck_job_enrichments_status_valid",
+        ),
         Index(
             "ix_job_enrichments_job_status_enriched_at_desc",
             "job_id",
             "status",
             desc("enriched_at"),
         ),
+        Index("ix_job_enrichments_job_id", "job_id"),
     )
 
     job_id: Mapped[int] = mapped_column(
