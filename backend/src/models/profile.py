@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import CheckConstraint, Index, Integer, String
+from sqlalchemy import CheckConstraint, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, validates
 
@@ -37,6 +37,7 @@ class Profile(BaseModel):
     experience_years: Mapped[int] = mapped_column(Integer, nullable=False)
     skills: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     preferences: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    resume_text: Mapped[str | None] = mapped_column(Text)
 
     @validates("experience_years")
     def validate_experience_years(self, key: str, value: int) -> int:

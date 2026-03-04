@@ -18,6 +18,7 @@ class ProfileCreate(BaseModel):
     experience_years: int = Field(ge=0)
     skills: list[SkillName] = Field(min_length=1)
     preferences: dict[str, Any] | None = None
+    resume_text: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -30,6 +31,7 @@ class ProfileUpdate(BaseModel):
     experience_years: int | None = Field(default=None, ge=0)
     skills: list[SkillName] | None = Field(default=None, min_length=1)
     preferences: dict[str, Any] | None = None
+    resume_text: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -45,6 +47,7 @@ class ProfileResponse(BaseModel):
     experience_years: int
     skills: list[str]
     preferences: dict[str, Any] | None
+    resume_text: str | None = None
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 
