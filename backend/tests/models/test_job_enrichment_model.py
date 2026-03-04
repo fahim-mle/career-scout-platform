@@ -12,7 +12,7 @@ def test_description_sections_validation_accepts_valid_shape() -> None:
     enrichment = JobEnrichment(
         job_id=1,
         extractor_version="heuristic-v1",
-        status="partial",
+        status="pending",
         description_sections=[
             {
                 "title": "Overview",
@@ -47,6 +47,6 @@ def test_description_sections_validation_rejects_invalid_shapes(
         JobEnrichment(
             job_id=1,
             extractor_version="heuristic-v1",
-            status="partial",
+            status="pending",
             description_sections=payload,
         )

@@ -13,7 +13,7 @@ from src.repositories.job_enrichment import JobEnrichmentRepository
 from tests.factories import JobFactory
 
 
-def build_payload(*, status: str = "partial") -> dict[str, object]:
+def build_payload(*, status: str = "pending") -> dict[str, object]:
     """Build a valid enrichment payload for repository tests.
 
     Args:
@@ -57,7 +57,7 @@ async def test_create_persists_enrichment(
     assert created.id is not None
     assert created.job_id == job.id
     assert created.extractor_version == "heuristic-v1"
-    assert created.status == "partial"
+    assert created.status == "pending"
 
 
 @pytest.mark.asyncio
@@ -76,10 +76,12 @@ async def test_update_modifies_allowed_fields(
         }
     )
 
-    updated = await repo.update(created.id, {"status": "success", "skills": ["Python"]})
+    updated = await repo.update(
+        created.id, {"status": "completed", "skills": ["Python"]}
+    )
 
     assert updated is not None
-    assert updated.status == "success"
+    assert updated.status == "completed"
     assert updated.skills == ["Python"]
 
 
@@ -117,7 +119,7 @@ async def test_get_latest_by_job_id_returns_most_recent(
         {
             "job_id": job.id,
             "extractor_version": "heuristic-v1",
-            **build_payload(status="partial"),
+            **build_payload(status="pending"),
         }
     )
 
@@ -126,7 +128,7 @@ async def test_get_latest_by_job_id_returns_most_recent(
         {
             "job_id": job.id,
             "extractor_version": "heuristic-v2",
-            **build_payload(status="success"),
+            **build_payload(status="completed"),
             "enriched_at": later,
         }
     )
@@ -150,11 +152,11 @@ async def test_upsert_by_job_and_version_creates_when_missing(
     upserted = await repo.upsert_by_job_and_version(
         job_id=job.id,
         extractor_version="heuristic-v1",
-        payload=build_payload(status="partial"),
+        payload=build_payload(status="pending"),
     )
 
     assert upserted.id is not None
-    assert upserted.status == "partial"
+    assert upserted.status == "pending"
 
 
 @pytest.mark.asyncio
@@ -169,7 +171,7 @@ async def test_upsert_by_job_and_version_fills_missing_without_clobbering(
         job_id=job.id,
         extractor_version="heuristic-v1",
         payload={
-            "status": "partial",
+            "status": "pending",
             "skills": ["Python"],
             "salary_min": 120000,
             "salary_max": 150000,
@@ -181,7 +183,7 @@ async def test_upsert_by_job_and_version_fills_missing_without_clobbering(
         job_id=job.id,
         extractor_version="heuristic-v1",
         payload={
-            "status": "success",
+            "status": "completed",
             "skills": ["Go"],
             "job_type": "Full-Time",
             "salary_min": 1,
@@ -191,7 +193,7 @@ async def test_upsert_by_job_and_version_fills_missing_without_clobbering(
     )
 
     assert second.id == first.id
-    assert second.status == "partial"
+    assert second.status == "pending"
     assert second.skills == ["Python"]
     assert second.job_type == "Full-Time"
     assert second.salary_min == 120000
@@ -211,7 +213,7 @@ async def test_upsert_by_job_and_version_recovers_from_create_race(
         {
             "job_id": job.id,
             "extractor_version": "heuristic-v1",
-            **build_payload(status="success"),
+            **build_payload(status="completed"),
         }
     )
 
@@ -230,7 +232,7 @@ async def test_upsert_by_job_and_version_recovers_from_create_race(
         result = await repo.upsert_by_job_and_version(
             job_id=job.id,
             extractor_version="heuristic-v1",
-            payload=build_payload(status="partial"),
+            payload=build_payload(status="pending"),
         )
 
     assert result.id == recovered.id
@@ -263,7 +265,7 @@ async def test_upsert_by_job_and_version_reraises_create_error_when_refetch_miss
             await repo.upsert_by_job_and_version(
                 job_id=job.id,
                 extractor_version="heuristic-v1",
-                payload=build_payload(status="partial"),
+                payload=build_payload(status="pending"),
             )
 
     assert mock_create.await_count == 1

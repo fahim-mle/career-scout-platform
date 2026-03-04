@@ -801,8 +801,8 @@ class JobEnrichmentService:
             payload: Built enrichment payload.
 
         Returns:
-            ``success`` when all target field groups were extracted,
-            ``partial`` when at least one was extracted, otherwise ``failed``.
+            ``completed`` when all target field groups were extracted,
+            ``pending`` when at least one was extracted, otherwise ``failed``.
         """
         has_skills = isinstance(payload.get("skills"), list) and bool(payload["skills"])
         has_job_type = isinstance(payload.get("job_type"), str) and bool(
@@ -815,9 +815,9 @@ class JobEnrichmentService:
 
         extracted_groups = int(has_skills) + int(has_job_type) + int(has_salary)
         if extracted_groups == 3:
-            return "success"
+            return "completed"
         if extracted_groups > 0:
-            return "partial"
+            return "pending"
         return "failed"
 
 

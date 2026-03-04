@@ -411,7 +411,7 @@ def test_build_enrichment_payload_maps_salary_range_to_processed_columns() -> No
     assert result["salary_raw"] == "$45"
     assert isinstance(result.get("description_sections"), list)
     assert result["description_sections"][0]["title"] == "Overview"
-    assert result["status"] == "success"
+    assert result["status"] == "completed"
 
 
 def test_build_enrichment_payload_uses_first_non_empty_description_for_sections() -> (
@@ -482,7 +482,7 @@ async def test_enrich_job_writes_processed_row_and_returns_enrichment_record() -
     assert enrichment.skills == ["Python", "FastAPI"]
     assert enrichment.job_type == "Full-Time"
     assert enrichment.salary_min == 45
-    assert enrichment.status == "success"
+    assert enrichment.status == "completed"
 
 
 @pytest.mark.asyncio
