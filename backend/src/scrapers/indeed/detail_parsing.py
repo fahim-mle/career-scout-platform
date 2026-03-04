@@ -64,7 +64,7 @@ class IndeedDetailParsingMixin:
         if description_short:
             details["description_short"] = description_short
         if raw_description_html is not None:
-            details["scraped_jobs"] = raw_description_html
+            details["raw_html"] = raw_description_html
 
         salary_type_text = await self._extract_text_from_page_selectors(
             selectors=self.SALARY_AND_TYPE_SELECTORS

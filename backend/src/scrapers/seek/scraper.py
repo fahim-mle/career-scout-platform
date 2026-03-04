@@ -193,7 +193,7 @@ class SeekScraper(BaseScraper, SeekCardParsingMixin, SeekDetailParsingMixin):
         if description_full:
             details["description_full"] = description_full
             details["description_short"] = description_short
-        details["scraped_jobs"] = raw_description_html
+        details["raw_html"] = raw_description_html
 
         job_type = await self._extract_job_type()
         if job_type:

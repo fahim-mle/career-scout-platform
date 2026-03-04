@@ -171,7 +171,7 @@ def _build_job_update_payload(
         "description_full",
         "description_short",
         "job_type",
-        "scraped_jobs",
+        "raw_html",
         "platform_metadata",
     )
     updates: dict[str, Any] = {}

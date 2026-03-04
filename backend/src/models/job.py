@@ -54,7 +54,7 @@ class Job(BaseModel):
     job_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     description_short: Mapped[str | None] = mapped_column(Text, nullable=True)
     description_full: Mapped[str | None] = mapped_column(Text, nullable=True)
-    scraped_jobs: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_html: Mapped[str | None] = mapped_column(Text, nullable=True)
     platform_metadata: Mapped[dict[str, Any] | None] = mapped_column(
         "metadata",
         JSONB,
@@ -72,7 +72,9 @@ class Job(BaseModel):
         default=True,
         server_default=text("true"),
     )
+    # DEPRECATED: Use job_enrichments.skills instead. Will be removed in a future migration.
     skills: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    # DEPRECATED: Use job_enrichments salary fields instead. Will be removed in a future migration.
     salary_range: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     @validates("platform")
@@ -87,7 +89,12 @@ class Job(BaseModel):
 
     @validates("skills")
     def validate_skills(self, key: str, value: list[str] | None) -> list[str] | None:
-        """Validate skills as a list of strings."""
+        """Validate skills as a list of strings.
+
+        .. deprecated::
+            Use ``job_enrichments.skills`` instead. This field will be removed
+            in a future migration.
+        """
         if value is None:
             return value
 
@@ -107,7 +114,12 @@ class Job(BaseModel):
         key: str,
         value: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
-        """Validate salary_range structure and values."""
+        """Validate salary_range structure and values.
+
+        .. deprecated::
+            Use ``job_enrichments`` salary fields instead. This field will be
+            removed in a future migration.
+        """
         if value is None:
             return value
 
