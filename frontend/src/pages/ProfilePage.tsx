@@ -1,41 +1,91 @@
+import { Loader2 } from 'lucide-react';
+import { useEffect } from 'react';
+import { ProfileForm } from '../components/profile/ProfileForm';
+import { useProfile } from '../hooks/useProfile';
 
 const ProfilePage = () => {
+  const {
+    profile,
+    loading,
+    saving,
+    uploading,
+    error,
+    saveError,
+    uploadError,
+    fetchProfile,
+    saveProfile,
+    uploadCVFile,
+  } = useProfile();
+
+  useEffect(() => {
+    fetchProfile();
+  }, [fetchProfile]);
+
+  const completedFields = profile
+    ? [
+        profile.name,
+        profile.location,
+        profile.experience_years != null,
+        profile.skills?.length,
+        profile.resume_text,
+      ].filter(Boolean).length
+    : 0;
+  const totalFields = 5;
+
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-3xl font-bold text-white">My Profile</h2>
-        <p className="text-slate-400 mt-1">Manage your professional information and preferences.</p>
-      </div>
-
-      <div className="glass-card p-8">
-        <div className="flex items-start gap-8">
-          <div className="w-32 h-32 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center">
-            <span className="text-4xl">AJ</span>
-          </div>
-          <div className="flex-1 space-y-4">
-            <div className="grid grid-cols-2 gap-6">
-              <div className="space-y-1">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Full Name</p>
-                <p className="text-lg font-medium text-white">Alex Johnson</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-3xl font-bold text-white">My Profile</h2>
+          <p className="text-slate-400 mt-1">
+            Manage your professional information and preferences.
+          </p>
+        </div>
+        {profile && (
+          <div className="text-right">
+            <p className="text-xs text-slate-500 mb-1">Profile completion</p>
+            <div className="flex items-center gap-2">
+              <div className="w-32 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-indigo-500 rounded-full transition-all"
+                  style={{
+                    width: `${(completedFields / totalFields) * 100}%`,
+                  }}
+                />
               </div>
-              <div className="space-y-1">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Title</p>
-                <p className="text-lg font-medium text-white">Software Engineer</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Email</p>
-                <p className="text-lg font-medium text-white">alex.j@example.com</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Location</p>
-                <p className="text-lg font-medium text-white">Brisbane, Australia</p>
-              </div>
+              <span className="text-xs text-slate-400">
+                {Math.round((completedFields / totalFields) * 100)}%
+              </span>
             </div>
           </div>
-        </div>
+        )}
       </div>
-    </div>
-  )
-}
 
-export default ProfilePage
+      {loading && (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
+        </div>
+      )}
+
+      {error && (
+        <div className="glass-card p-4 border-red-500/20 text-red-400 text-sm">
+          {error}
+        </div>
+      )}
+
+      {!loading && !error && (
+        <ProfileForm
+          profile={profile}
+          saving={saving}
+          uploading={uploading}
+          saveError={saveError}
+          uploadError={uploadError}
+          onSave={saveProfile}
+          onUploadCV={uploadCVFile}
+        />
+      )}
+    </div>
+  );
+};
+
+export default ProfilePage;
