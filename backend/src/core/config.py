@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_MODEL: str = "gpt-4"
 
+    # File uploads
+    UPLOAD_DIR: str = "/tmp/career-scout-uploads"
+    MAX_UPLOAD_SIZE_MB: int = 10
+
     # Scraper credentials
     SCRAPER_ENABLED: bool = False
     LINKEDIN_EMAIL: str = ""

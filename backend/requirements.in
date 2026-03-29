@@ -11,3 +11,5 @@ redis
 celery
 prometheus-fastapi-instrumentator
 playwright
+pypdf
+python-docx
