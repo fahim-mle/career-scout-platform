@@ -5,6 +5,8 @@ from __future__ import annotations
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
 
+from src.ai.cv_parser import extract_text_from_file, parse_cv_with_llm
+from src.ai.llm_client import BaseLLMClient
 from src.core.exceptions import (
     BusinessLogicError,
     ConflictError,
@@ -18,13 +20,17 @@ from src.schemas.profile import ProfileCreate, ProfileResponse, ProfileUpdate
 class ProfileService:
     """Service layer for singleton profile business rules."""
 
-    def __init__(self, repo: ProfileRepository):
+    def __init__(
+        self, repo: ProfileRepository, llm_client: BaseLLMClient
+    ) -> None:
         """Initialize ProfileService.
 
         Args:
             repo: Repository used for profile persistence operations.
+            llm_client: LLM client used for CV summarisation.
         """
         self.repo = repo
+        self._llm_client = llm_client
 
     async def get_profile(self) -> ProfileResponse:
         """Get the singleton profile.
@@ -183,6 +189,60 @@ class ProfileService:
 
         log.bind(profile_id=existing.id).info("Deleted profile")
         return True
+
+    async def upload_cv(
+        self, file_bytes: bytes, mime_type: str
+    ) -> ProfileResponse:
+        """Extract and summarise a CV file, storing the result in the profile.
+
+        Args:
+            file_bytes: Raw uploaded file content.
+            mime_type: MIME type of the uploaded file.
+
+        Returns:
+            Updated profile response with populated ``resume_text``.
+
+        Raises:
+            NotFoundError: If no profile exists.
+            BusinessLogicError: If extraction, LLM call, or update fails.
+        """
+        log = logger.bind(
+            service=self.__class__.__name__, operation="upload_cv"
+        )
+        log.info("Processing CV upload")
+
+        try:
+            existing = await self.repo.get_first()
+        except RepositoryError as exc:
+            log.bind(error=str(exc)).error(
+                "Failed to fetch profile before CV upload"
+            )
+            raise BusinessLogicError("Failed to upload CV.") from exc
+
+        if existing is None:
+            log.warning("No profile found for CV upload")
+            raise NotFoundError("Profile not found.")
+
+        raw_text = extract_text_from_file(file_bytes, mime_type)
+        summary = await parse_cv_with_llm(raw_text, self._llm_client)
+
+        try:
+            updated = await self.repo.update(
+                existing.id, {"resume_text": summary}
+            )
+        except (RepositoryError, ValueError) as exc:
+            log.bind(error=str(exc)).error(
+                "Failed to persist CV summary"
+            )
+            raise BusinessLogicError(
+                f"Failed to save CV summary: {exc}"
+            ) from exc
+
+        if updated is None:
+            raise NotFoundError("Profile not found.")
+
+        log.bind(profile_id=updated.id).info("CV upload complete")
+        return ProfileResponse.model_validate(updated)
 
     def _validate_experience_years(self, experience_years: object) -> None:
         """Validate business rule for profile experience years.

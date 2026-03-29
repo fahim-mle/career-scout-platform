@@ -11,6 +11,7 @@ from src.repositories.job import JobRepository
 from src.repositories.job_enrichment import JobEnrichmentRepository
 from src.repositories.match_score import MatchScoreRepository
 from src.repositories.profile import ProfileRepository
+from src.ai.llm_client import get_llm_client
 from src.services.job_service import JobService
 from src.services.match_service import MatchService
 from src.services.profile_service import ProfileService
@@ -65,16 +66,18 @@ def get_job_service(db: AsyncSession = Depends(get_db_session)) -> JobService:
     )
 
 
-def get_profile_service(db: AsyncSession = Depends(get_db_session)) -> ProfileService:
+def get_profile_service(
+    db: AsyncSession = Depends(get_db_session),
+) -> ProfileService:
     """Provide a profile service dependency.
 
     Args:
         db: Active async DB session provided by dependency injection.
 
     Returns:
-        ProfileService configured with a ProfileRepository bound to the session.
+        ProfileService configured with a ProfileRepository and LLM client.
     """
-    return ProfileService(ProfileRepository(db))
+    return ProfileService(ProfileRepository(db), get_llm_client())
 
 
 def get_match_service(db: AsyncSession = Depends(get_db_session)) -> MatchService:

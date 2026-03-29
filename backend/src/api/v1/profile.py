@@ -4,10 +4,19 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Response,
+    UploadFile,
+    status,
+)
 from loguru import logger
 
+from src.ai.cv_parser import ALLOWED_MIME_TYPES
 from src.api.deps import get_profile_service
+from src.core.config import settings
 from src.core.exceptions import (
     BusinessLogicError,
     ConflictError,
@@ -152,6 +161,59 @@ async def delete_profile(
         ) from exc
     except BusinessLogicError as exc:
         logger.error("Failed to delete profile", error=str(exc))
+        raise HTTPException(
+            status_code=_map_business_logic_error_status(exc),
+            detail=str(exc),
+        ) from exc
+
+
+@router.post("/cv", response_model=ProfileResponse)
+async def upload_cv(
+    file: UploadFile,
+    service: Annotated[ProfileService, Depends(get_profile_service)],
+) -> ProfileResponse:
+    """Upload a CV file and populate the profile resume_text field.
+
+    Args:
+        file: Uploaded CV file (PDF or DOCX).
+        service: Profile service dependency.
+
+    Returns:
+        Updated profile response with populated resume_text.
+
+    Raises:
+        HTTPException: If file is invalid, profile missing, or upload fails.
+    """
+    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
+    if file.content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Unsupported file type: {file.content_type}. "
+                "Only PDF and DOCX are accepted."
+            ),
+        )
+
+    file_bytes = await file.read()
+
+    if len(file_bytes) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"File too large. Maximum size is "
+                f"{settings.MAX_UPLOAD_SIZE_MB} MB."
+            ),
+        )
+
+    try:
+        return await service.upload_cv(file_bytes, file.content_type)
+    except NotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except BusinessLogicError as exc:
         raise HTTPException(
             status_code=_map_business_logic_error_status(exc),
             detail=str(exc),
