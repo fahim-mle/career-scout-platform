@@ -22,6 +22,7 @@ celery_app = Celery(
         "src.tasks.scraper_tasks",
         "src.tasks.enrichment_tasks",
         "src.tasks.scoring_tasks",
+        "src.tasks.cv_tasks",
     ],
 )
 

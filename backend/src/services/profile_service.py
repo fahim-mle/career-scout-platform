@@ -5,8 +5,7 @@ from __future__ import annotations
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
 
-from src.ai.cv_parser import extract_text_from_file, parse_cv_with_llm
-from src.ai.llm_client import BaseLLMClient
+from src.ai.cv_parser import extract_text_from_file
 from src.core.exceptions import (
     BusinessLogicError,
     ConflictError,
@@ -20,17 +19,13 @@ from src.schemas.profile import ProfileCreate, ProfileResponse, ProfileUpdate
 class ProfileService:
     """Service layer for singleton profile business rules."""
 
-    def __init__(
-        self, repo: ProfileRepository, llm_client: BaseLLMClient
-    ) -> None:
+    def __init__(self, repo: ProfileRepository) -> None:
         """Initialize ProfileService.
 
         Args:
             repo: Repository used for profile persistence operations.
-            llm_client: LLM client used for CV summarisation.
         """
         self.repo = repo
-        self._llm_client = llm_client
 
     async def get_profile(self) -> ProfileResponse:
         """Get the singleton profile.
@@ -224,24 +219,28 @@ class ProfileService:
             raise NotFoundError("Profile not found.")
 
         raw_text = extract_text_from_file(file_bytes, mime_type)
-        summary = await parse_cv_with_llm(raw_text, self._llm_client)
 
         try:
             updated = await self.repo.update(
-                existing.id, {"resume_text": summary}
+                existing.id, {"resume_text": raw_text}
             )
         except (RepositoryError, ValueError) as exc:
             log.bind(error=str(exc)).error(
-                "Failed to persist CV summary"
+                "Failed to persist raw CV text"
             )
             raise BusinessLogicError(
-                f"Failed to save CV summary: {exc}"
+                f"Failed to save CV text: {exc}"
             ) from exc
 
         if updated is None:
             raise NotFoundError("Profile not found.")
 
-        log.bind(profile_id=updated.id).info("CV upload complete")
+        from src.tasks.cv_tasks import summarise_cv_task
+        summarise_cv_task.delay(existing.id, raw_text)
+
+        log.bind(profile_id=updated.id).info(
+            "CV uploaded, summarisation queued"
+        )
         return ProfileResponse.model_validate(updated)
 
     def _validate_experience_years(self, experience_years: object) -> None:
