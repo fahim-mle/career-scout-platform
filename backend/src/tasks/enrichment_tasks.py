@@ -18,7 +18,7 @@ from src.core.metrics import (
     observe_enrichment_duration,
 )
 from src.celery_app import celery_app
-from src.db.session import get_session
+from src.db.session import get_session, run_with_cleanup
 from src.repositories.job import JobRepository
 from src.repositories.job_enrichment import JobEnrichmentRepository
 from src.services.job_enrichment_service import JobEnrichmentService
@@ -329,7 +329,7 @@ def enrich_unstructured_jobs_task(
             task_id=self.request.id,
         )
 
-        result = asyncio.run(
+        result = run_with_cleanup(
             _run_batch_enrichment(
                 platform=platform,
                 limit=limit,
@@ -460,7 +460,7 @@ def enrich_single_job_task(
                     "failed": 0,
                 }
 
-        result = asyncio.run(_run_single())
+        result = run_with_cleanup(_run_single())
 
         _record_enrichment_result_metrics(
             platform=platform,

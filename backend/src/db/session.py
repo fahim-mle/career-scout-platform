@@ -1,7 +1,8 @@
 """Async SQLAlchemy session management."""
 
+import asyncio
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, AsyncIterator
+from typing import Any, AsyncGenerator, AsyncIterator, Coroutine, TypeVar
 
 from loguru import logger
 from sqlalchemy import text
@@ -14,6 +15,8 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from src.core.config import settings
+
+_T = TypeVar("_T")
 
 engine: AsyncEngine = create_async_engine(
     settings.DATABASE_URL,
@@ -57,6 +60,35 @@ async def get_session_dependency() -> AsyncGenerator[AsyncSession, None]:
     """
     async with get_session() as session:
         yield session
+
+
+def run_with_cleanup(coro: Coroutine[Any, Any, _T]) -> _T:
+    """Run a coroutine and dispose the DB engine pool afterwards.
+
+    Use this in Celery tasks instead of ``asyncio.run()`` when the worker
+    uses ``--pool=solo``.  The solo pool runs all tasks in the same OS thread
+    sequentially, so each ``asyncio.run()`` creates a fresh event loop.
+    Without cleanup the asyncpg connection pool from the previous loop is
+    still cached on the engine, causing a
+    ``Future attached to a different loop`` error in the next task.
+
+    Disposing the engine after each run tears down the pool so the next
+    invocation starts with a clean slate.
+
+    Args:
+        coro: Coroutine to execute.
+
+    Returns:
+        The coroutine's return value.
+    """
+
+    async def _wrapper() -> _T:
+        try:
+            return await coro
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(_wrapper())
 
 
 async def database_health_check() -> bool:
