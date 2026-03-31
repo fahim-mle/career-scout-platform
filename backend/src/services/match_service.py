@@ -188,11 +188,15 @@ class MatchService:
                 error=str(exc),
             ).warning("Skipped scoring LLM metrics due to invalid values")
 
-    async def score_all_unscored_jobs(self, profile_id: int) -> int:
-        """Score all active jobs that do not yet have a match score.
+    async def score_all_unscored_jobs(
+        self, profile_id: int, max_jobs: int | None = None
+    ) -> int:
+        """Score active jobs that do not yet have a match score.
 
         Args:
             profile_id: Profile identifier used as scoring context.
+            max_jobs: Optional cap on how many jobs to score per call.
+                      ``None`` means no cap (score all unscored jobs).
 
         Returns:
             Number of newly scored jobs.
@@ -287,6 +291,12 @@ class MatchService:
                         error=str(exc),
                     ).error("Failed to score job in batch")
                     continue
+
+                if max_jobs is not None and scored_count >= max_jobs:
+                    log.bind(scored_count=scored_count, max_jobs=max_jobs).info(
+                        "Reached max_jobs cap; stopping batch early"
+                    )
+                    return scored_count
 
             if len(jobs) < MAX_BATCH_LIMIT:
                 break
