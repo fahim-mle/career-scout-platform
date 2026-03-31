@@ -195,7 +195,7 @@ async def test_update_persists_raw_html_and_metadata_fields(
     updated = await repo.update(
         job.id,
         {
-            "scraped_jobs": "<main><p>About the job</p></main>",
+            "raw_html": "<main><p>About the job</p></main>",
             "platform_metadata": {
                 "platform": "linkedin",
                 "location": "Sydney",
@@ -205,7 +205,7 @@ async def test_update_persists_raw_html_and_metadata_fields(
     )
 
     assert updated is not None
-    assert updated.scraped_jobs == "<main><p>About the job</p></main>"
+    assert updated.raw_html == "<main><p>About the job</p></main>"
     assert updated.platform_metadata == {
         "platform": "linkedin",
         "location": "Sydney",
@@ -379,7 +379,7 @@ async def test_create_accepts_optional_json_and_dates(db_session: AsyncSession) 
         "posted_date": date(2026, 2, 1),
         "skills": ["Python", "SQLAlchemy"],
         "salary_range": {"min": 100000, "max": 140000, "currency": "AUD"},
-        "scraped_jobs": "raw linkedin payload",
+        "raw_html": "raw linkedin payload",
         "platform_metadata": {
             "posted_date_text": "2 days ago",
             "number_of_applicants": "37 applicants",
@@ -394,7 +394,7 @@ async def test_create_accepts_optional_json_and_dates(db_session: AsyncSession) 
     assert created.posted_date == date(2026, 2, 1)
     assert created.skills == ["Python", "SQLAlchemy"]
     assert created.salary_range == {"min": 100000, "max": 140000, "currency": "AUD"}
-    assert created.scraped_jobs == "raw linkedin payload"
+    assert created.raw_html == "raw linkedin payload"
     assert created.platform_metadata == {
         "posted_date_text": "2 days ago",
         "number_of_applicants": "37 applicants",
@@ -402,3 +402,215 @@ async def test_create_accepts_optional_json_and_dates(db_session: AsyncSession) 
         "actively_reviewing_applicants": False,
         "platform": "linkedin",
     }
+
+
+# ── New filter tests ──────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_all_filters_by_job_type(
+    db_session: AsyncSession,
+) -> None:
+    """get_all should return only jobs matching the job_type filter (case-insensitive)."""
+    repo = JobRepository(db_session)
+    await repo.create(
+        {
+            "external_id": "jt-fulltime-1",
+            "platform": "seek",
+            "url": "https://seek.com.au/jobs/jt-fulltime-1",
+            "title": "Full-time Dev",
+            "company": "Corp A",
+            "location": "Sydney",
+            "job_type": "Full-time (Permanent)",
+        }
+    )
+    await repo.create(
+        {
+            "external_id": "jt-contract-1",
+            "platform": "seek",
+            "url": "https://seek.com.au/jobs/jt-contract-1",
+            "title": "Contract Dev",
+            "company": "Corp B",
+            "location": "Melbourne",
+            "job_type": "Contract",
+        }
+    )
+
+    results = await repo.get_all(job_type="full-time")
+
+    titles = [j.title for j in results]
+    assert "Full-time Dev" in titles
+    assert "Contract Dev" not in titles
+
+
+@pytest.mark.asyncio
+async def test_get_all_filters_job_type_case_insensitive(
+    db_session: AsyncSession,
+) -> None:
+    """job_type filter should match regardless of casing."""
+    repo = JobRepository(db_session)
+    await repo.create(
+        {
+            "external_id": "jt-ci-1",
+            "platform": "linkedin",
+            "url": "https://linkedin.com/jobs/jt-ci-1",
+            "title": "CI Job",
+            "company": "Corp",
+            "location": "Brisbane",
+            "job_type": "Full-time",
+        }
+    )
+
+    upper = await repo.get_all(job_type="FULL-TIME")
+    lower = await repo.get_all(job_type="full-time")
+
+    assert any(j.title == "CI Job" for j in upper)
+    assert any(j.title == "CI Job" for j in lower)
+
+
+@pytest.mark.asyncio
+async def test_get_all_search_matches_title(
+    db_session: AsyncSession,
+) -> None:
+    """search param should filter by title substring (case-insensitive)."""
+    repo = JobRepository(db_session)
+    await repo.create(
+        {
+            "external_id": "srch-eng-1",
+            "platform": "indeed",
+            "url": "https://indeed.com/jobs/srch-eng-1",
+            "title": "Senior Python Engineer",
+            "company": "Acme",
+            "location": "Remote",
+        }
+    )
+    await repo.create(
+        {
+            "external_id": "srch-des-1",
+            "platform": "indeed",
+            "url": "https://indeed.com/jobs/srch-des-1",
+            "title": "UI Designer",
+            "company": "Acme",
+            "location": "Sydney",
+        }
+    )
+
+    results = await repo.get_all(search="python")
+
+    titles = [j.title for j in results]
+    assert "Senior Python Engineer" in titles
+    assert "UI Designer" not in titles
+
+
+@pytest.mark.asyncio
+async def test_get_all_search_matches_company(
+    db_session: AsyncSession,
+) -> None:
+    """search param should also match on company name."""
+    repo = JobRepository(db_session)
+    await repo.create(
+        {
+            "external_id": "srch-corp-1",
+            "platform": "linkedin",
+            "url": "https://linkedin.com/jobs/srch-corp-1",
+            "title": "Engineer",
+            "company": "Globex Corporation",
+            "location": "Springfield",
+        }
+    )
+    await repo.create(
+        {
+            "external_id": "srch-corp-2",
+            "platform": "linkedin",
+            "url": "https://linkedin.com/jobs/srch-corp-2",
+            "title": "Engineer",
+            "company": "Initech",
+            "location": "Miami",
+        }
+    )
+
+    results = await repo.get_all(search="globex")
+
+    companies = [j.company for j in results]
+    assert "Globex Corporation" in companies
+    assert "Initech" not in companies
+
+
+@pytest.mark.asyncio
+async def test_get_all_search_matches_location(
+    db_session: AsyncSession,
+) -> None:
+    """search param should also match on location."""
+    repo = JobRepository(db_session)
+    await repo.create(
+        {
+            "external_id": "srch-loc-1",
+            "platform": "seek",
+            "url": "https://seek.com.au/jobs/srch-loc-1",
+            "title": "Data Analyst",
+            "company": "Corp",
+            "location": "Gold Coast, QLD",
+        }
+    )
+    await repo.create(
+        {
+            "external_id": "srch-loc-2",
+            "platform": "seek",
+            "url": "https://seek.com.au/jobs/srch-loc-2",
+            "title": "Data Analyst",
+            "company": "Corp",
+            "location": "Sydney, NSW",
+        }
+    )
+
+    results = await repo.get_all(search="Gold Coast")
+
+    locations = [j.location for j in results]
+    assert "Gold Coast, QLD" in locations
+    assert "Sydney, NSW" not in locations
+
+
+@pytest.mark.asyncio
+async def test_get_all_no_results_when_search_matches_nothing(
+    db_session: AsyncSession,
+) -> None:
+    """search param that matches nothing should return an empty list."""
+    repo = JobRepository(db_session)
+
+    results = await repo.get_all(search="xyzzy-guaranteed-no-match")
+
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_get_all_ignores_blank_search_and_job_type(
+    db_session: AsyncSession,
+) -> None:
+    """Blank search and job_type values should be treated as no filters."""
+    repo = JobRepository(db_session)
+    await repo.create(
+        {
+            "external_id": "blank-filter-1",
+            "platform": "seek",
+            "url": "https://seek.com.au/jobs/blank-filter-1",
+            "title": "Backend Engineer",
+            "company": "Acme",
+            "location": "Brisbane",
+            "job_type": "Contract",
+        }
+    )
+    await repo.create(
+        {
+            "external_id": "blank-filter-2",
+            "platform": "seek",
+            "url": "https://seek.com.au/jobs/blank-filter-2",
+            "title": "Data Engineer",
+            "company": "Acme",
+            "location": "Sydney",
+            "job_type": "Full-time",
+        }
+    )
+
+    results = await repo.get_all(job_type="   ", search="   ")
+
+    assert len(results) == 2

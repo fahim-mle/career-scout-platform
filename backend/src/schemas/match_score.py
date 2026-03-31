@@ -24,6 +24,7 @@ class MatchScoreCreate(BaseModel):
     category: MatchCategory
     explanation: str = Field(min_length=1)
     scored_at: datetime | None = None
+    scorer_version: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -35,6 +36,7 @@ class MatchScoreUpdate(BaseModel):
     category: MatchCategory | None = None
     explanation: str | None = Field(default=None, min_length=1)
     scored_at: datetime | None = None
+    scorer_version: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -51,6 +53,7 @@ class MatchScoreResponse(BaseModel):
     category: MatchCategory
     explanation: str
     scored_at: datetime
+    scorer_version: str | None = None
 
     model_config = ConfigDict(from_attributes=True, extra="forbid")
 

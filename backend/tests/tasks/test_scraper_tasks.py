@@ -417,7 +417,7 @@ def test_build_job_update_payload_only_sets_missing_fields() -> None:
         description_full="already set",
         description_short=None,
         job_type=None,
-        scraped_jobs=None,
+        raw_html=None,
         platform_metadata=None,
     )
     scraped = {
@@ -441,7 +441,7 @@ def test_build_job_update_payload_empty_when_no_new_values() -> None:
         description_full="full",
         description_short="short",
         job_type="Contract",
-        scraped_jobs="<div>already set</div>",
+        raw_html="<div>already set</div>",
         platform_metadata={"platform": "linkedin"},
     )
     scraped = {
@@ -454,25 +454,25 @@ def test_build_job_update_payload_empty_when_no_new_values() -> None:
     assert result == {}
 
 
-def test_build_job_update_payload_sets_missing_scraped_jobs_and_metadata() -> None:
+def test_build_job_update_payload_sets_missing_raw_html_and_metadata() -> None:
     """Update helper should enrich raw html and metadata when missing."""
 
     existing = SimpleNamespace(
         description_full="full",
         description_short="short",
         job_type="Contract",
-        scraped_jobs=None,
+        raw_html=None,
         platform_metadata=None,
     )
     scraped = {
-        "scraped_jobs": '<div id="job-details">About the job</div>',
+        "raw_html": '<div id="job-details">About the job</div>',
         "platform_metadata": {"platform": "linkedin", "location": "Sydney"},
     }
 
     result = scraper_tasks._build_job_update_payload(existing, scraped)
 
     assert result == {
-        "scraped_jobs": '<div id="job-details">About the job</div>',
+        "raw_html": '<div id="job-details">About the job</div>',
         "platform_metadata": {"platform": "linkedin", "location": "Sydney"},
     }
 
@@ -486,18 +486,18 @@ def test_build_job_update_payload_sets_meaningful_values_when_existing_is_empty(
         description_full="full",
         description_short="short",
         job_type="Contract",
-        scraped_jobs="",
+        raw_html="",
         platform_metadata={},
     )
     scraped = {
-        "scraped_jobs": '<div id="job-details">About the job</div>',
+        "raw_html": '<div id="job-details">About the job</div>',
         "platform_metadata": {"platform": "seek", "location": "Brisbane"},
     }
 
     result = scraper_tasks._build_job_update_payload(existing, scraped)
 
     assert result == {
-        "scraped_jobs": '<div id="job-details">About the job</div>',
+        "raw_html": '<div id="job-details">About the job</div>',
         "platform_metadata": {"platform": "seek", "location": "Brisbane"},
     }
 
@@ -509,7 +509,7 @@ def test_normalize_scraped_payload_maps_metadata_to_platform_metadata() -> None:
         {
             "external_id": "123",
             "metadata": {"platform": "linkedin", "location": "Remote"},
-            "scraped_jobs": '<div id="job-details">Role details</div>',
+            "raw_html": '<div id="job-details">Role details</div>',
         }
     )
 
@@ -518,7 +518,7 @@ def test_normalize_scraped_payload_maps_metadata_to_platform_metadata() -> None:
         "platform": "linkedin",
         "location": "Remote",
     }
-    assert normalized["scraped_jobs"] == '<div id="job-details">Role details</div>'
+    assert normalized["raw_html"] == '<div id="job-details">Role details</div>'
 
 
 def test_normalize_scraped_payload_preserves_existing_platform_metadata() -> None:
@@ -546,11 +546,11 @@ def test_build_job_update_payload_ignores_empty_new_metadata_values() -> None:
         description_full=None,
         description_short=None,
         job_type=None,
-        scraped_jobs=None,
+        raw_html=None,
         platform_metadata=None,
     )
     scraped = {
-        "scraped_jobs": "   ",
+        "raw_html": "   ",
         "platform_metadata": {},
         "description_full": "",
     }
@@ -574,7 +574,7 @@ def test_run_linkedin_scrape_and_persist_maps_metadata_and_persists_fields(
             "location": "Remote",
             "description_full": "Full description",
             "description_short": "Short description",
-            "scraped_jobs": '<div id="job-details"><p>Role</p></div>',
+            "raw_html": '<div id="job-details"><p>Role</p></div>',
             "metadata": {"platform": "linkedin", "date_posted": "1 day ago"},
         }
     ]
@@ -617,10 +617,7 @@ def test_run_linkedin_scrape_and_persist_maps_metadata_and_persists_fields(
     assert result["created"] == 1
     assert result["updated"] == 0
     assert captured_payloads
-    assert (
-        captured_payloads[0]["scraped_jobs"]
-        == '<div id="job-details"><p>Role</p></div>'
-    )
+    assert captured_payloads[0]["raw_html"] == '<div id="job-details"><p>Role</p></div>'
     assert captured_payloads[0]["platform_metadata"] == {
         "platform": "linkedin",
         "date_posted": "1 day ago",
@@ -642,7 +639,7 @@ def test_run_seek_scrape_and_persist_maps_metadata_and_persists_fields(
             "location": "Brisbane",
             "description_full": "Full description",
             "description_short": "Short description",
-            "scraped_jobs": '<div data-automation="jobAdDetails">Role</div>',
+            "raw_html": '<div data-automation="jobAdDetails">Role</div>',
             "metadata": {"platform": "seek", "date_posted": "1 day ago"},
         }
     ]
@@ -686,7 +683,7 @@ def test_run_seek_scrape_and_persist_maps_metadata_and_persists_fields(
     assert result["updated"] == 0
     assert captured_payloads
     assert (
-        captured_payloads[0]["scraped_jobs"]
+        captured_payloads[0]["raw_html"]
         == '<div data-automation="jobAdDetails">Role</div>'
     )
     assert captured_payloads[0]["platform_metadata"] == {
@@ -704,7 +701,7 @@ def test_run_linkedin_scrape_and_persist_updates_empty_fields_with_meaningful_va
         {
             "external_id": "linkedin-existing-1",
             "platform": "linkedin",
-            "scraped_jobs": '<div id="job-details">Fresh role details</div>',
+            "raw_html": '<div id="job-details">Fresh role details</div>',
             "metadata": {"platform": "linkedin", "date_posted": "Today"},
         }
     ]
@@ -723,7 +720,7 @@ def test_run_linkedin_scrape_and_persist_updates_empty_fields_with_meaningful_va
                 description_full="existing full",
                 description_short="existing short",
                 job_type="Full-Time",
-                scraped_jobs="",
+                raw_html="",
                 platform_metadata={},
             )
 
@@ -758,7 +755,7 @@ def test_run_linkedin_scrape_and_persist_updates_empty_fields_with_meaningful_va
     assert len(update_payloads) == 1
     assert update_payloads[0]["job_id"] == 707
     assert update_payloads[0]["payload"] == {
-        "scraped_jobs": '<div id="job-details">Fresh role details</div>',
+        "raw_html": '<div id="job-details">Fresh role details</div>',
         "platform_metadata": {"platform": "linkedin", "date_posted": "Today"},
     }
 
@@ -771,7 +768,7 @@ def test_run_linkedin_scrape_and_persist_does_not_overwrite_existing_enriched_fi
         {
             "external_id": "linkedin-existing-2",
             "platform": "linkedin",
-            "scraped_jobs": '<div id="job-details">New details</div>',
+            "raw_html": '<div id="job-details">New details</div>',
             "metadata": {"platform": "linkedin", "date_posted": "Today"},
             "description_full": "new full description",
         }
@@ -791,7 +788,7 @@ def test_run_linkedin_scrape_and_persist_does_not_overwrite_existing_enriched_fi
                 description_full="existing full",
                 description_short="existing short",
                 job_type="Full-Time",
-                scraped_jobs='<div id="job-details">Existing details</div>',
+                raw_html='<div id="job-details">Existing details</div>',
                 platform_metadata={"platform": "linkedin", "date_posted": "Yesterday"},
             )
 
@@ -836,7 +833,7 @@ def test_run_seek_scrape_and_persist_updates_empty_fields_with_meaningful_values
         {
             "external_id": "seek-existing-1",
             "platform": "seek",
-            "scraped_jobs": '<div data-automation="jobAdDetails">Fresh role details</div>',
+            "raw_html": '<div data-automation="jobAdDetails">Fresh role details</div>',
             "metadata": {"platform": "seek", "date_posted": "Today"},
         }
     ]
@@ -855,7 +852,7 @@ def test_run_seek_scrape_and_persist_updates_empty_fields_with_meaningful_values
                 description_full="existing full",
                 description_short="existing short",
                 job_type="Full-Time",
-                scraped_jobs="",
+                raw_html="",
                 platform_metadata={},
             )
 
@@ -890,7 +887,7 @@ def test_run_seek_scrape_and_persist_updates_empty_fields_with_meaningful_values
     assert len(update_payloads) == 1
     assert update_payloads[0]["job_id"] == 77
     assert update_payloads[0]["payload"] == {
-        "scraped_jobs": '<div data-automation="jobAdDetails">Fresh role details</div>',
+        "raw_html": '<div data-automation="jobAdDetails">Fresh role details</div>',
         "platform_metadata": {"platform": "seek", "date_posted": "Today"},
     }
 
@@ -903,7 +900,7 @@ def test_run_seek_scrape_and_persist_skips_empty_values_for_non_empty_existing_f
         {
             "external_id": "seek-existing-2",
             "platform": "seek",
-            "scraped_jobs": "   ",
+            "raw_html": "   ",
             "metadata": {},
         }
     ]
@@ -922,7 +919,7 @@ def test_run_seek_scrape_and_persist_skips_empty_values_for_non_empty_existing_f
                 description_full="existing full",
                 description_short="existing short",
                 job_type="Full-Time",
-                scraped_jobs='<div data-automation="jobAdDetails">Existing details</div>',
+                raw_html='<div data-automation="jobAdDetails">Existing details</div>',
                 platform_metadata={"platform": "seek", "date_posted": "Yesterday"},
             )
 
@@ -967,7 +964,7 @@ def test_run_seek_scrape_and_persist_does_not_overwrite_existing_enriched_fields
         {
             "external_id": "seek-existing-3",
             "platform": "seek",
-            "scraped_jobs": '<div data-automation="jobAdDetails">New details</div>',
+            "raw_html": '<div data-automation="jobAdDetails">New details</div>',
             "metadata": {"platform": "seek", "date_posted": "Today"},
             "description_full": "new full description",
         }
@@ -987,7 +984,7 @@ def test_run_seek_scrape_and_persist_does_not_overwrite_existing_enriched_fields
                 description_full="existing full",
                 description_short="existing short",
                 job_type="Full-Time",
-                scraped_jobs='<div data-automation="jobAdDetails">Existing details</div>',
+                raw_html='<div data-automation="jobAdDetails">Existing details</div>',
                 platform_metadata={"platform": "seek", "date_posted": "Yesterday"},
             )
 
@@ -1036,7 +1033,7 @@ def test_build_job_update_payload_updates_title_when_duplicate_artifact_correcte
         description_full="full",
         description_short="short",
         job_type="Contract",
-        scraped_jobs=None,
+        raw_html=None,
         platform_metadata=None,
     )
     scraped = {
@@ -1056,7 +1053,7 @@ def test_build_job_update_payload_persists_normalized_incoming_title() -> None:
         description_full="full",
         description_short="short",
         job_type="Contract",
-        scraped_jobs=None,
+        raw_html=None,
         platform_metadata=None,
     )
     scraped = {
@@ -1076,7 +1073,7 @@ def test_build_job_update_payload_updates_separator_joined_duplicate_title() -> 
         description_full="full",
         description_short="short",
         job_type="Contract",
-        scraped_jobs=None,
+        raw_html=None,
         platform_metadata=None,
     )
     scraped = {
@@ -1096,7 +1093,7 @@ def test_build_job_update_payload_does_not_update_distinct_existing_title() -> N
         description_full="full",
         description_short="short",
         job_type="Contract",
-        scraped_jobs=None,
+        raw_html=None,
         platform_metadata=None,
     )
     scraped = {
@@ -1118,7 +1115,7 @@ def test_build_job_update_payload_does_not_update_legitimate_repeated_word_title
         description_full="full",
         description_short="short",
         job_type="Contract",
-        scraped_jobs=None,
+        raw_html=None,
         platform_metadata=None,
     )
     scraped = {
@@ -1588,7 +1585,7 @@ def test_run_indeed_scrape_and_persist_maps_metadata_and_persists_fields(
             "location": "Brisbane",
             "description_full": "Full description",
             "description_short": "Short description",
-            "scraped_jobs": '<div id="jobDescriptionText">Role details</div>',
+            "raw_html": '<div id="jobDescriptionText">Role details</div>',
             "metadata": {"platform": "indeed", "date_posted": "Today"},
         }
     ]
@@ -1632,7 +1629,7 @@ def test_run_indeed_scrape_and_persist_maps_metadata_and_persists_fields(
     assert result["updated"] == 0
     assert captured_payloads
     assert (
-        captured_payloads[0]["scraped_jobs"]
+        captured_payloads[0]["raw_html"]
         == '<div id="jobDescriptionText">Role details</div>'
     )
     assert captured_payloads[0]["platform_metadata"] == {
@@ -1650,7 +1647,7 @@ def test_run_indeed_scrape_and_persist_updates_empty_fields_with_meaningful_valu
         {
             "external_id": "indeed-existing-1",
             "platform": "indeed",
-            "scraped_jobs": '<div id="jobDescriptionText">Fresh role details</div>',
+            "raw_html": '<div id="jobDescriptionText">Fresh role details</div>',
             "metadata": {"platform": "indeed", "date_posted": "Today"},
         }
     ]
@@ -1669,7 +1666,7 @@ def test_run_indeed_scrape_and_persist_updates_empty_fields_with_meaningful_valu
                 description_full="existing full",
                 description_short="existing short",
                 job_type="Full-Time",
-                scraped_jobs="",
+                raw_html="",
                 platform_metadata={},
             )
 
@@ -1704,7 +1701,7 @@ def test_run_indeed_scrape_and_persist_updates_empty_fields_with_meaningful_valu
     assert len(update_payloads) == 1
     assert update_payloads[0]["job_id"] == 404
     assert update_payloads[0]["payload"] == {
-        "scraped_jobs": '<div id="jobDescriptionText">Fresh role details</div>',
+        "raw_html": '<div id="jobDescriptionText">Fresh role details</div>',
         "platform_metadata": {"platform": "indeed", "date_posted": "Today"},
     }
 
@@ -1717,7 +1714,7 @@ def test_run_indeed_scrape_and_persist_skips_empty_values_for_non_empty_existing
         {
             "external_id": "indeed-existing-2",
             "platform": "indeed",
-            "scraped_jobs": "   ",
+            "raw_html": "   ",
             "metadata": {},
         }
     ]
@@ -1736,7 +1733,7 @@ def test_run_indeed_scrape_and_persist_skips_empty_values_for_non_empty_existing
                 description_full="existing full",
                 description_short="existing short",
                 job_type="Full-Time",
-                scraped_jobs='<div id="jobDescriptionText">Existing details</div>',
+                raw_html='<div id="jobDescriptionText">Existing details</div>',
                 platform_metadata={"platform": "indeed", "date_posted": "Yesterday"},
             )
 
@@ -1781,7 +1778,7 @@ def test_run_indeed_scrape_and_persist_does_not_overwrite_non_empty_existing_fie
         {
             "external_id": "indeed-existing-3",
             "platform": "indeed",
-            "scraped_jobs": '<div id="jobDescriptionText">New details</div>',
+            "raw_html": '<div id="jobDescriptionText">New details</div>',
             "metadata": {
                 "platform": "indeed",
                 "date_posted": "Posted today",
@@ -1803,7 +1800,7 @@ def test_run_indeed_scrape_and_persist_does_not_overwrite_non_empty_existing_fie
                 description_full="existing full",
                 description_short="existing short",
                 job_type="Full-Time",
-                scraped_jobs='<div id="jobDescriptionText">Existing details</div>',
+                raw_html='<div id="jobDescriptionText">Existing details</div>',
                 platform_metadata={"platform": "indeed", "date_posted": "Yesterday"},
             )
 
@@ -1867,7 +1864,7 @@ def test_run_linkedin_scrape_and_persist_does_not_count_none_updates(
                     description_full=None,
                     description_short=None,
                     job_type=None,
-                    scraped_jobs=None,
+                    raw_html=None,
                     platform_metadata=None,
                 )
             return None
@@ -1924,7 +1921,7 @@ def test_run_linkedin_scrape_and_persist_counts_real_updates(
                 description_full=None,
                 description_short=None,
                 job_type=None,
-                scraped_jobs=None,
+                raw_html=None,
                 platform_metadata=None,
             )
 

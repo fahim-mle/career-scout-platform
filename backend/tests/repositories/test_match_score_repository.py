@@ -273,3 +273,123 @@ async def test_update_and_upsert_validate_protected_fields(
             profile_id=profile.id,
             payload={"profile_id": profile.id + 1, **build_payload()},
         )
+
+
+@pytest.mark.asyncio
+async def test_get_jobs_by_score_applies_job_type_contains_filter(
+    db_session: AsyncSession,
+    job_factory: JobFactory,
+) -> None:
+    """Relevance query should apply case-insensitive contains matching on job_type."""
+    profile = await create_profile(db_session)
+    full_time = await job_factory.create(
+        external_id="ms-filter-jt-1",
+        title="Platform Engineer",
+        company="Acme",
+        location="Brisbane",
+    )
+    contract = await job_factory.create(
+        external_id="ms-filter-jt-2",
+        title="Data Engineer",
+        company="Beta",
+        location="Sydney",
+    )
+    full_time.job_type = "Full-time (Permanent)"
+    contract.job_type = "Contract"
+    await db_session.commit()
+
+    repo = MatchScoreRepository(db_session)
+    await repo.create(
+        {
+            "job_id": full_time.id,
+            "profile_id": profile.id,
+            **build_payload(relevance_score=91),
+        }
+    )
+    await repo.create(
+        {
+            "job_id": contract.id,
+            "profile_id": profile.id,
+            **build_payload(relevance_score=84),
+        }
+    )
+
+    rows = await repo.get_jobs_by_score(profile_id=profile.id, job_type="full-time")
+
+    assert [row[0].id for row in rows] == [full_time.id]
+
+
+@pytest.mark.asyncio
+async def test_get_jobs_by_score_applies_search_filter(
+    db_session: AsyncSession,
+    job_factory: JobFactory,
+) -> None:
+    """Relevance query search should match title/company/location fields."""
+    profile = await create_profile(db_session)
+    python_job = await job_factory.create(
+        external_id="ms-filter-search-1",
+        title="Senior Python Engineer",
+        company="Acme Labs",
+        location="Gold Coast",
+    )
+    data_job = await job_factory.create(
+        external_id="ms-filter-search-2",
+        title="Data Analyst",
+        company="Other Co",
+        location="Sydney",
+    )
+
+    repo = MatchScoreRepository(db_session)
+    await repo.create(
+        {
+            "job_id": python_job.id,
+            "profile_id": profile.id,
+            **build_payload(relevance_score=88),
+        }
+    )
+    await repo.create(
+        {
+            "job_id": data_job.id,
+            "profile_id": profile.id,
+            **build_payload(relevance_score=77),
+        }
+    )
+
+    rows = await repo.get_jobs_by_score(profile_id=profile.id, search="python")
+
+    assert [row[0].id for row in rows] == [python_job.id]
+
+
+@pytest.mark.asyncio
+async def test_get_jobs_by_score_ignores_blank_text_filters(
+    db_session: AsyncSession,
+    job_factory: JobFactory,
+) -> None:
+    """Blank search and job_type filters should be treated as unset filters."""
+    profile = await create_profile(db_session)
+    first = await job_factory.create(external_id="ms-filter-blank-1")
+    second = await job_factory.create(external_id="ms-filter-blank-2")
+
+    repo = MatchScoreRepository(db_session)
+    await repo.create(
+        {
+            "job_id": first.id,
+            "profile_id": profile.id,
+            **build_payload(relevance_score=70),
+        }
+    )
+    await repo.create(
+        {
+            "job_id": second.id,
+            "profile_id": profile.id,
+            **build_payload(relevance_score=60),
+        }
+    )
+
+    rows = await repo.get_jobs_by_score(
+        profile_id=profile.id,
+        job_type="   ",
+        search="   ",
+    )
+
+    assert {row[0].id for row in rows} == {first.id, second.id}

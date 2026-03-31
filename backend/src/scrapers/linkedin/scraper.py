@@ -326,7 +326,7 @@ class LinkedInScraper(
             "description_full": description_full,
             "description_short": self._build_short_description(description_full),
             "job_type": await self._extract_job_type(),
-            "scraped_jobs": raw_description_html,
+            "raw_html": raw_description_html,
             "metadata": metadata,
         }
 

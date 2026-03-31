@@ -28,7 +28,7 @@ from src.core.metrics import (
 )
 from src.core.title_normalization import normalize_job_title, title_preview_for_log
 from src.celery_app import celery_app
-from src.db.session import get_session
+from src.db.session import get_session, run_with_cleanup
 from src.repositories.job import JobRepository
 from src.scrapers.indeed import (
     IndeedNonRetryableError,
@@ -171,7 +171,7 @@ def _build_job_update_payload(
         "description_full",
         "description_short",
         "job_type",
-        "scraped_jobs",
+        "raw_html",
         "platform_metadata",
     )
     updates: dict[str, Any] = {}
@@ -905,7 +905,7 @@ def scrape_linkedin_profile_set(self: DatabaseTask) -> dict[str, Any]:
         enrichment_job_ids: list[int] = []
 
         for profile in profiles:
-            result = asyncio.run(
+            result = run_with_cleanup(
                 _run_linkedin_scrape_and_persist(
                     query=profile["query"],
                     location=profile["location"],
@@ -1048,7 +1048,7 @@ def scrape_seek_profile_set(self: DatabaseTask) -> dict[str, Any]:
         enrichment_job_ids: list[int] = []
 
         for profile in profiles:
-            result = asyncio.run(
+            result = run_with_cleanup(
                 _run_seek_scrape_and_persist(
                     query=profile["query"],
                     location=profile["location"],
@@ -1192,7 +1192,7 @@ def scrape_indeed_profile_set(self: DatabaseTask) -> dict[str, Any]:
         enrichment_job_ids: list[int] = []
 
         for profile in profiles:
-            result = asyncio.run(
+            result = run_with_cleanup(
                 _run_indeed_scrape_and_persist(
                     query=profile["query"],
                     location=profile["location"],
@@ -1339,7 +1339,7 @@ def scrape_linkedin_jobs(
                 task_id=self.request.id,
             )
 
-        result = asyncio.run(
+        result = run_with_cleanup(
             _run_linkedin_scrape_and_persist(
                 query=query,
                 location=location,
@@ -1458,7 +1458,7 @@ def scrape_seek_jobs(
                 task_id=self.request.id,
             )
 
-        result = asyncio.run(
+        result = run_with_cleanup(
             _run_seek_scrape_and_persist(
                 query=query,
                 location=location,
@@ -1577,7 +1577,7 @@ def scrape_indeed_jobs(
                 task_id=self.request.id,
             )
 
-        result = asyncio.run(
+        result = run_with_cleanup(
             _run_indeed_scrape_and_persist(
                 query=query,
                 location=location,

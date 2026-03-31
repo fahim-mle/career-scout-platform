@@ -9,7 +9,7 @@ from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field
 
 from src.models.job import ALLOWED_PLATFORMS
 
-MAX_SCRAPED_JOBS_LENGTH = 100_000
+MAX_RAW_HTML_LENGTH = 100_000
 
 
 class JobCreate(BaseModel):
@@ -24,12 +24,14 @@ class JobCreate(BaseModel):
     job_type: str | None = Field(default=None, max_length=50)
     description_short: str | None = None
     description_full: str | None = None
-    scraped_jobs: str | None = Field(default=None, max_length=MAX_SCRAPED_JOBS_LENGTH)
+    raw_html: str | None = Field(default=None, max_length=MAX_RAW_HTML_LENGTH)
     metadata: dict[str, Any] | None = None
     posted_date: date | None = None
     scraped_at: datetime | None = None
     is_active: bool = True
+    # DEPRECATED: Use job_enrichments.skills instead. Will be removed in a future migration.
     skills: list[str] | None = None
+    # DEPRECATED: Use job_enrichments salary fields instead. Will be removed in a future migration.
     salary_range: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid")
@@ -47,12 +49,14 @@ class JobUpdate(BaseModel):
     job_type: str | None = Field(default=None, max_length=50)
     description_short: str | None = None
     description_full: str | None = None
-    scraped_jobs: str | None = Field(default=None, max_length=MAX_SCRAPED_JOBS_LENGTH)
+    raw_html: str | None = Field(default=None, max_length=MAX_RAW_HTML_LENGTH)
     metadata: dict[str, Any] | None = None
     posted_date: date | None = None
     scraped_at: datetime | None = None
     is_active: bool | None = None
+    # DEPRECATED: Use job_enrichments.skills instead. Will be removed in a future migration.
     skills: list[str] | None = None
+    # DEPRECATED: Use job_enrichments salary fields instead. Will be removed in a future migration.
     salary_range: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid")
@@ -73,7 +77,7 @@ class RawJobResponse(BaseModel):
     job_type: str | None
     description_short: str | None
     description_full: str | None
-    scraped_jobs: str | None = None
+    raw_html: str | None = None
     metadata: dict[str, Any] | None = Field(
         default=None,
         validation_alias="platform_metadata",
@@ -81,7 +85,9 @@ class RawJobResponse(BaseModel):
     posted_date: date | None
     scraped_at: datetime
     is_active: bool
+    # DEPRECATED: Use job_enrichments.skills instead. Will be removed in a future migration.
     skills: list[str] | None
+    # DEPRECATED: Use job_enrichments salary fields instead. Will be removed in a future migration.
     salary_range: dict[str, Any] | None
     relevance_score: int | None = None
 
@@ -102,7 +108,7 @@ class EnrichedJobResponse(BaseModel):
     location: str
     description_short: str | None
     description_full: str | None
-    scraped_jobs: str | None = None
+    raw_html: str | None = None
     metadata: dict[str, Any] | None = Field(
         default=None,
         validation_alias="platform_metadata",
@@ -110,8 +116,10 @@ class EnrichedJobResponse(BaseModel):
     posted_date: date | None
     scraped_at: datetime
     is_active: bool
+    # DEPRECATED: Use job_enrichments.skills instead. Will be removed in a future migration.
     skills: list[str] | None = None
     job_type: str | None = None
+    # DEPRECATED: Use job_enrichments salary fields instead. Will be removed in a future migration.
     salary_range: dict[str, Any] | None = None
     enrichment_status: str | None = None
     enrichment_version: str | None = None

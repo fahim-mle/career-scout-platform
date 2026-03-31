@@ -65,14 +65,16 @@ def get_job_service(db: AsyncSession = Depends(get_db_session)) -> JobService:
     )
 
 
-def get_profile_service(db: AsyncSession = Depends(get_db_session)) -> ProfileService:
+def get_profile_service(
+    db: AsyncSession = Depends(get_db_session),
+) -> ProfileService:
     """Provide a profile service dependency.
 
     Args:
         db: Active async DB session provided by dependency injection.
 
     Returns:
-        ProfileService configured with a ProfileRepository bound to the session.
+        ProfileService configured with a ProfileRepository.
     """
     return ProfileService(ProfileRepository(db))
 

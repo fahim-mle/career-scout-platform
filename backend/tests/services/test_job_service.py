@@ -37,7 +37,7 @@ def make_job(**overrides: Any) -> SimpleNamespace:
         "job_type": None,
         "description_short": "Short text",
         "description_full": "Longer full description",
-        "scraped_jobs": None,
+        "raw_html": None,
         "platform_metadata": None,
         "posted_date": date.today(),
         "scraped_at": now,
@@ -93,12 +93,30 @@ class FakeJobRepository:
         limit: int = 100,
         platform: str | None = None,
         is_active: bool = True,
+        job_type: str | None = None,
+        search: str | None = None,
     ) -> list[SimpleNamespace]:
         if self.fail_get_all:
             raise RepositoryError("repo get_all failed")
         items = [job for job in self.jobs.values() if job.is_active is is_active]
         if platform is not None:
             items = [job for job in items if job.platform == platform]
+        if job_type is not None:
+            probe = job_type.lower()
+            items = [
+                job
+                for job in items
+                if isinstance(job.job_type, str) and probe in job.job_type.lower()
+            ]
+        if search is not None:
+            probe = search.lower()
+            items = [
+                job
+                for job in items
+                if probe in job.title.lower()
+                or probe in job.company.lower()
+                or probe in job.location.lower()
+            ]
         items.sort(key=lambda item: item.id, reverse=True)
         return items[skip : skip + limit]
 
@@ -266,7 +284,7 @@ async def test_create_job_accepts_optional_platform_metadata() -> None:
         title="Backend Engineer",
         company="Acme",
         location="Brisbane",
-        scraped_jobs="raw block",
+        raw_html="raw block",
         metadata={
             "platform": "linkedin",
             "posted_date_text": "1 week ago",
@@ -278,7 +296,7 @@ async def test_create_job_accepts_optional_platform_metadata() -> None:
 
     result = await service.create_job(payload)
 
-    assert result.scraped_jobs == "raw block"
+    assert result.raw_html == "raw block"
     assert result.metadata == {
         "platform": "linkedin",
         "posted_date_text": "1 week ago",
@@ -297,7 +315,7 @@ async def test_update_job_accepts_raw_html_and_generic_metadata_alias() -> None:
     result = await service.update_job(
         1,
         JobUpdate(
-            scraped_jobs="<section><p>raw detail html</p></section>",
+            raw_html="<section><p>raw detail html</p></section>",
             metadata={
                 "platform": "linkedin",
                 "location": "Remote",
@@ -306,7 +324,7 @@ async def test_update_job_accepts_raw_html_and_generic_metadata_alias() -> None:
         ),
     )
 
-    assert result.scraped_jobs == "<section><p>raw detail html</p></section>"
+    assert result.raw_html == "<section><p>raw detail html</p></section>"
     assert result.metadata == {
         "platform": "linkedin",
         "location": "Remote",

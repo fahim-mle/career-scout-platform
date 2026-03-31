@@ -5,6 +5,7 @@ from __future__ import annotations
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
 
+from src.ai.cv_parser import extract_text_from_file
 from src.core.exceptions import (
     BusinessLogicError,
     ConflictError,
@@ -18,7 +19,7 @@ from src.schemas.profile import ProfileCreate, ProfileResponse, ProfileUpdate
 class ProfileService:
     """Service layer for singleton profile business rules."""
 
-    def __init__(self, repo: ProfileRepository):
+    def __init__(self, repo: ProfileRepository) -> None:
         """Initialize ProfileService.
 
         Args:
@@ -183,6 +184,64 @@ class ProfileService:
 
         log.bind(profile_id=existing.id).info("Deleted profile")
         return True
+
+    async def upload_cv(
+        self, file_bytes: bytes, mime_type: str
+    ) -> ProfileResponse:
+        """Extract and summarise a CV file, storing the result in the profile.
+
+        Args:
+            file_bytes: Raw uploaded file content.
+            mime_type: MIME type of the uploaded file.
+
+        Returns:
+            Updated profile response with populated ``resume_text``.
+
+        Raises:
+            NotFoundError: If no profile exists.
+            BusinessLogicError: If extraction, LLM call, or update fails.
+        """
+        log = logger.bind(
+            service=self.__class__.__name__, operation="upload_cv"
+        )
+        log.info("Processing CV upload")
+
+        try:
+            existing = await self.repo.get_first()
+        except RepositoryError as exc:
+            log.bind(error=str(exc)).error(
+                "Failed to fetch profile before CV upload"
+            )
+            raise BusinessLogicError("Failed to upload CV.") from exc
+
+        if existing is None:
+            log.warning("No profile found for CV upload")
+            raise NotFoundError("Profile not found.")
+
+        raw_text = extract_text_from_file(file_bytes, mime_type)
+
+        try:
+            updated = await self.repo.update(
+                existing.id, {"resume_text": raw_text}
+            )
+        except (RepositoryError, ValueError) as exc:
+            log.bind(error=str(exc)).error(
+                "Failed to persist raw CV text"
+            )
+            raise BusinessLogicError(
+                f"Failed to save CV text: {exc}"
+            ) from exc
+
+        if updated is None:
+            raise NotFoundError("Profile not found.")
+
+        from src.tasks.cv_tasks import summarise_cv_task
+        summarise_cv_task.delay(existing.id, raw_text)
+
+        log.bind(profile_id=updated.id).info(
+            "CV uploaded, summarisation queued"
+        )
+        return ProfileResponse.model_validate(updated)
 
     def _validate_experience_years(self, experience_years: object) -> None:
         """Validate business rule for profile experience years.

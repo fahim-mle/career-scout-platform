@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import io
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -11,6 +13,22 @@ from httpx import ASGITransport, AsyncClient
 from src.api.deps import get_db_session, get_profile_service
 from src.core.exceptions import BusinessLogicError, ConflictError, RepositoryError
 from src.main import app
+
+# Minimal valid PDF bytes (1-page empty PDF)
+_MINIMAL_PDF = (
+    b"%PDF-1.4\n"
+    b"1 0 obj<</Type /Catalog /Pages 2 0 R>>endobj\n"
+    b"2 0 obj<</Type /Pages /Kids[3 0 R]/Count 1>>endobj\n"
+    b"3 0 obj<</Type /Page /Parent 2 0 R /MediaBox[0 0 612 792]"
+    b">>endobj\n"
+    b"xref\n0 4\n"
+    b"0000000000 65535 f \n"
+    b"0000000009 00000 n \n"
+    b"0000000058 00000 n \n"
+    b"0000000115 00000 n \n"
+    b"trailer<</Size 4 /Root 1 0 R>>\n"
+    b"startxref\n190\n%%EOF"
+)
 
 
 def build_profile_payload() -> dict[str, Any]:
@@ -197,3 +215,86 @@ class TestProfileAPI:
         response = await client.post("/api/v1/profile", json=payload)
 
         assert response.status_code == 422
+
+
+class TestCVUploadAPI:
+    """Covers POST /profile/cv endpoint behaviour."""
+
+    @pytest.mark.asyncio
+    async def test_upload_cv_success(
+        self, client: AsyncClient
+    ) -> None:
+        await client.post("/api/v1/profile", json=build_profile_payload())
+
+        mock_service = MagicMock()
+        mock_service.upload_cv = AsyncMock(
+            return_value=MagicMock(
+                model_dump=lambda: {**build_profile_payload(),
+                                    "resume_text": "CV summary"}
+            )
+        )
+
+        with patch(
+            "src.ai.cv_parser.extract_text_from_file",
+            return_value="raw cv text",
+        ), patch(
+            "src.ai.cv_parser.parse_cv_with_llm",
+            new=AsyncMock(return_value="CV summary"),
+        ):
+            app.dependency_overrides[get_profile_service] = (
+                lambda: mock_service
+            )
+            response = await client.post(
+                "/api/v1/profile/cv",
+                files={"file": ("cv.pdf", _MINIMAL_PDF, "application/pdf")},
+            )
+            app.dependency_overrides.pop(get_profile_service, None)
+
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_upload_cv_unsupported_type_rejected(
+        self, client: AsyncClient
+    ) -> None:
+        response = await client.post(
+            "/api/v1/profile/cv",
+            files={"file": ("cv.txt", b"hello", "text/plain")},
+        )
+
+        assert response.status_code == 400
+        assert "unsupported file type" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_upload_cv_no_profile_returns_404(
+        self, client: AsyncClient
+    ) -> None:
+        with patch(
+            "src.ai.cv_parser.extract_text_from_file",
+            return_value="raw cv text",
+        ), patch(
+            "src.ai.cv_parser.parse_cv_with_llm",
+            new=AsyncMock(return_value="CV summary"),
+        ):
+            response = await client.post(
+                "/api/v1/profile/cv",
+                files={
+                    "file": ("cv.pdf", _MINIMAL_PDF, "application/pdf")
+                },
+            )
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_upload_cv_file_too_large_rejected(
+        self, client: AsyncClient
+    ) -> None:
+        oversized = b"x" * (11 * 1024 * 1024)  # 11 MB
+
+        response = await client.post(
+            "/api/v1/profile/cv",
+            files={"file": ("big.pdf", oversized, "application/pdf")},
+        )
+
+        assert response.status_code == 400
+        assert "too large" in response.json()["detail"].lower()

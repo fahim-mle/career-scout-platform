@@ -151,7 +151,7 @@ class OllamaClient(BaseLLMClient):
         self.base_url = (base_url or settings.OLLAMA_BASE_URL).rstrip("/")
         self.model = model or settings.OLLAMA_MODEL
         if timeout is None:
-            self.timeout = httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
+            self.timeout = httpx.Timeout(connect=5.0, read=300.0, write=10.0, pool=5.0)
         elif isinstance(timeout, httpx.Timeout):
             self.timeout = timeout
         else:

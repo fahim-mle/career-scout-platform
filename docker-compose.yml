@@ -41,7 +41,7 @@ services:
       start_period: 10s
 
   ollama:
-    image: ollama/ollama:0.5.7
+    image: ollama/ollama:latest
     container_name: career-scout-ollama
     restart: unless-stopped
     volumes:

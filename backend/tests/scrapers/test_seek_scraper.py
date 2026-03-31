@@ -145,7 +145,7 @@ async def test_parse_job_card_returns_none_when_required_field_missing() -> None
 
 @pytest.mark.asyncio
 async def test_scrape_job_details_extracts_raw_description_html() -> None:
-    """Detail scraping should include raw description HTML in scraped_jobs."""
+    """Detail scraping should include raw description HTML in raw_html."""
     html_block = '<div data-automation="jobAdDetails"><p>Build APIs</p></div>'
     scraper = SeekScraper()
     scraper.page = cast(
@@ -166,17 +166,17 @@ async def test_scrape_job_details_extracts_raw_description_html() -> None:
 
     details = await scraper.scrape_job_details("https://www.seek.com.au/job/81234567")
 
-    assert {"description_full", "description_short", "scraped_jobs", "metadata"} <= set(
+    assert {"description_full", "description_short", "raw_html", "metadata"} <= set(
         details.keys()
     )
     assert details["description_full"] == "Build APIs with FastAPI"
     assert details["description_short"] == "Build APIs with FastAPI"
-    assert details["scraped_jobs"] == html_block
+    assert details["raw_html"] == html_block
     assert details["metadata"] == {"platform": "seek"}
 
 
 @pytest.mark.asyncio
-async def test_scrape_job_details_sets_scraped_jobs_none_when_html_missing() -> None:
+async def test_scrape_job_details_sets_raw_html_none_when_html_missing() -> None:
     """Detail scraping should keep running when raw HTML cannot be extracted."""
     scraper = SeekScraper()
     scraper.page = cast(
@@ -199,7 +199,7 @@ async def test_scrape_job_details_sets_scraped_jobs_none_when_html_missing() -> 
 
     assert details["description_full"] == "Reliable text payload"
     assert details["description_short"] == "Reliable text payload"
-    assert details["scraped_jobs"] is None
+    assert details["raw_html"] is None
     assert details["metadata"] == {"platform": "seek"}
 
 
@@ -317,7 +317,7 @@ async def test_scrape_job_details_uses_fallback_selector_for_raw_html() -> None:
     details = await scraper.scrape_job_details("https://www.seek.com.au/job/81234567")
 
     assert details["description_full"] == "Fallback role details"
-    assert details["scraped_jobs"] == fallback_html
+    assert details["raw_html"] == fallback_html
     assert details["metadata"] == {"platform": "seek"}
 
 
@@ -398,6 +398,5 @@ async def test_scrape_job_details_keeps_existing_text_behavior() -> None:
         <= SeekScraper.SHORT_DESCRIPTION_MAX_LENGTH + 3
     )
     assert (
-        details["scraped_jobs"]
-        == '<div data-automation="jobAdDetails"><p>seek</p></div>'
+        details["raw_html"] == '<div data-automation="jobAdDetails"><p>seek</p></div>'
     )

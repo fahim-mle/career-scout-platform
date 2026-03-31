@@ -31,9 +31,11 @@ async def list_jobs(
     limit: Annotated[int, Query(ge=1, le=100)] = 100,
     sort: str = Query("date", pattern="^(date|relevance)$"),
     platform: str | None = None,
+    job_type: str | None = Query(None, max_length=100, description="Filter by job type, e.g. 'Full-time'"),
+    search: str | None = Query(None, max_length=200, description="Keyword search on title, company, or location"),
     is_active: bool = True,
 ) -> list[EnrichedJobResponse]:
-    """List jobs with pagination and optional filters.
+    """List jobs with pagination, optional filters, and sort strategy.
 
     Args:
         service: Job service dependency.
@@ -41,6 +43,8 @@ async def list_jobs(
         limit: Maximum number of rows to return.
         sort: Sort strategy; date order or relevance score order.
         platform: Optional platform filter.
+        job_type: Optional job type filter (case-insensitive).
+        search: Optional keyword search across title, company, and location.
         is_active: Whether to return active jobs only.
 
     Returns:
@@ -56,12 +60,16 @@ async def list_jobs(
                 limit=limit,
                 platform=platform,
                 is_active=is_active,
+                job_type=job_type,
+                search=search,
             )
         return await service.list_enriched_jobs(
             skip=skip,
             limit=limit,
             platform=platform,
             is_active=is_active,
+            job_type=job_type,
+            search=search,
         )
     except BusinessLogicError as exc:
         raise HTTPException(

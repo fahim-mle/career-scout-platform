@@ -19,7 +19,7 @@ from src.core.metrics import (
     set_jobs_by_score_category,
 )
 from src.celery_app import celery_app
-from src.db.session import get_session
+from src.db.session import get_session, run_with_cleanup
 from src.models.match_score import ALLOWED_MATCH_CATEGORIES
 from src.repositories.job import JobRepository
 from src.repositories.job_enrichment import JobEnrichmentRepository
@@ -167,12 +167,14 @@ def _record_jobs_by_category_metrics(
 async def _run_score_all_unscored_jobs(
     platform: str,
     task_id: str | None,
+    max_jobs: int | None = None,
 ) -> dict[str, Any]:
-    """Resolve dependencies and score all currently unscored jobs.
+    """Resolve dependencies and score a bounded batch of unscored jobs.
 
     Args:
         platform: Source platform label.
         task_id: Optional Celery task id for logs.
+        max_jobs: Optional cap on jobs scored per invocation.
 
     Returns:
         Structured summary payload for the batch scoring run.
@@ -213,7 +215,9 @@ async def _run_score_all_unscored_jobs(
             task_id=task_id,
             progress="started",
         )
-        scored = await match_service.score_all_unscored_jobs(profile_id=profile.id)
+        scored = await match_service.score_all_unscored_jobs(
+            profile_id=profile.id, max_jobs=max_jobs
+        )
         try:
             category_counts = await match_score_repository.count_by_category(
                 profile_id=profile.id
@@ -339,11 +343,16 @@ async def _run_score_single_job(
 def score_all_unscored_jobs_task(
     self: Task,
     platform: str = LINKEDIN_PLATFORM,
+    max_jobs: int | None = 100,
 ) -> dict[str, Any]:
-    """Score all unscored jobs for the first available profile.
+    """Score up to *max_jobs* unscored jobs for the first available profile.
 
     Args:
         platform: Source platform label for metrics and logs.
+        max_jobs: Cap on how many jobs to score per invocation.
+                  Defaults to 100 to prevent a single run from blocking the
+                  worker for an unbounded amount of time.  Pass ``None`` to
+                  score every unscored job (use with caution).
 
     Returns:
         Structured batch scoring summary payload.
@@ -371,10 +380,11 @@ def score_all_unscored_jobs_task(
                 "reason": "SCRAPER_ENABLED is false",
             }
 
-        result = asyncio.run(
+        result = run_with_cleanup(
             _run_score_all_unscored_jobs(
                 platform=platform,
                 task_id=self.request.id,
+                max_jobs=max_jobs,
             )
         )
         run_status = str(result.get("status", "success"))
@@ -469,7 +479,7 @@ def score_single_job_task(
                 "reason": "SCRAPER_ENABLED is false",
             }
 
-        result = asyncio.run(
+        result = run_with_cleanup(
             _run_score_single_job(
                 job_id=job_id,
                 profile_id=profile_id,

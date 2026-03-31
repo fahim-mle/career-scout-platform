@@ -12,6 +12,7 @@ from src.ai.llm_client import BaseLLMClient, get_llm_client
 from src.ai.prompts import job_scoring_prompt
 from src.core.exceptions import BusinessLogicError, NotFoundError, RepositoryError
 from src.core.metrics import increment_scoring_llm_calls, observe_scoring_llm_duration
+from src.models.job import ALLOWED_PLATFORMS
 from src.repositories.job import JobRepository
 from src.repositories.job_enrichment import JobEnrichmentRepository
 from src.repositories.match_score import MatchScoreRepository
@@ -137,6 +138,7 @@ class MatchService:
             score = self._validate_score(llm_payload)
             explanation = self._validate_explanation(llm_payload)
             category = self._determine_category(score)
+            scorer_version = self._build_scorer_version()
             record = await self.match_repo.upsert_by_job_and_profile(
                 job_id=job_id,
                 profile_id=profile_id,
@@ -145,6 +147,7 @@ class MatchService:
                     "category": category,
                     "explanation": explanation,
                     "scored_at": datetime.now(timezone.utc),
+                    "scorer_version": scorer_version,
                 },
             )
         except RepositoryError as exc:
@@ -185,11 +188,15 @@ class MatchService:
                 error=str(exc),
             ).warning("Skipped scoring LLM metrics due to invalid values")
 
-    async def score_all_unscored_jobs(self, profile_id: int) -> int:
-        """Score all active jobs that do not yet have a match score.
+    async def score_all_unscored_jobs(
+        self, profile_id: int, max_jobs: int | None = None
+    ) -> int:
+        """Score active jobs that do not yet have a match score.
 
         Args:
             profile_id: Profile identifier used as scoring context.
+            max_jobs: Optional cap on how many jobs to score per call.
+                      ``None`` means no cap (score all unscored jobs).
 
         Returns:
             Number of newly scored jobs.
@@ -285,6 +292,12 @@ class MatchService:
                     ).error("Failed to score job in batch")
                     continue
 
+                if max_jobs is not None and scored_count >= max_jobs:
+                    log.bind(scored_count=scored_count, max_jobs=max_jobs).info(
+                        "Reached max_jobs cap; stopping batch early"
+                    )
+                    return scored_count
+
             if len(jobs) < MAX_BATCH_LIMIT:
                 break
             skip += len(jobs)
@@ -299,6 +312,8 @@ class MatchService:
         platform: str | None = None,
         is_active: bool = True,
         profile_id: int | None = None,
+        job_type: str | None = None,
+        search: str | None = None,
     ) -> list[EnrichedJobResponse]:
         """List jobs ordered by relevance score for one profile.
 
@@ -308,6 +323,8 @@ class MatchService:
             platform: Optional platform filter.
             is_active: Active status filter.
             profile_id: Optional profile id; falls back to the first profile.
+            job_type: Optional job-type filter.
+            search: Optional keyword search across title, company, location.
 
         Returns:
             Enriched job responses including ``relevance_score``.
@@ -323,8 +340,20 @@ class MatchService:
             platform=platform,
             is_active=is_active,
             profile_id=profile_id,
+            job_type=job_type,
+            search=search,
         )
         log.info("Listing jobs by relevance")
+
+        if platform is not None and platform not in ALLOWED_PLATFORMS:
+            allowed = ", ".join(ALLOWED_PLATFORMS)
+            log.warning("Invalid platform filter")
+            raise BusinessLogicError(
+                f"Invalid platform '{platform}'. Allowed values: {allowed}."
+            )
+
+        normalized_job_type = self._normalize_optional_filter(job_type)
+        normalized_search = self._normalize_optional_filter(search)
 
         resolved_profile_id = profile_id
         if resolved_profile_id is None:
@@ -350,6 +379,8 @@ class MatchService:
                 limit=limit,
                 platform=platform,
                 is_active=is_active,
+                job_type=normalized_job_type,
+                search=normalized_search,
             )
         except (RepositoryError, ValueError) as exc:
             log.bind(error=str(exc)).error("Failed to list jobs by relevance")
@@ -558,6 +589,46 @@ class MatchService:
         if isinstance(value, datetime):
             return value
         return None
+
+    @staticmethod
+    def _normalize_optional_filter(value: str | None) -> str | None:
+        """Normalize optional text filters before repository usage.
+
+        Args:
+            value: Optional raw query parameter string.
+
+        Returns:
+            Trimmed filter value when non-empty, otherwise ``None``.
+        """
+        if value is None:
+            return None
+
+        normalized = value.strip()
+        return normalized or None
+
+    def _build_scorer_version(self) -> str | None:
+        """Build a scorer version string from the configured LLM client.
+
+        Combines the provider class name and the model name (e.g.
+        ``OllamaClient/llama3.2:3b``) so that each match score row records
+        exactly which model produced it.
+
+        Returns:
+            Scorer version string, or ``None`` if the model name cannot be
+            determined.
+        """
+        model = getattr(self.llm_client, "model", None)
+        if not isinstance(model, str) or not model.strip():
+            logger.bind(
+                service=self.__class__.__name__,
+                operation="_build_scorer_version",
+            ).warning("LLM client has no model attribute; scorer_version will be None")
+            return None
+
+        provider = type(self.llm_client).__name__
+        version = f"{provider}/{model.strip()}"
+        # Truncate to the column's String(100) limit
+        return version[:100]
 
     def _determine_category(self, score: int) -> str:
         """Map numeric relevance score into canonical category label.

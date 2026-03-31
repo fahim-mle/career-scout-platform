@@ -73,4 +73,29 @@ def extract_skills_prompt(job_description: str) -> str:
     )
 
 
-__all__ = ["extract_skills_prompt", "job_scoring_prompt"]
+def cv_summary_prompt(raw_cv_text: str) -> str:
+    """Build a prompt to summarise raw CV text into a concise profile description.
+
+    Args:
+        raw_cv_text: Raw text extracted from the uploaded CV file.
+
+    Returns:
+        Prompt asking the model for a plain-text CV summary.
+    """
+    clean_text = raw_cv_text.strip()
+
+    return (
+        "You are a CV parsing assistant.\n"
+        "Read the raw CV text below and produce a concise plain-text"
+        " summary.\n"
+        "Include: key technical skills, years of experience, education,"
+        " and a brief work history.\n"
+        "Do not use markdown, bullet points, headers, or JSON.\n"
+        "Write in plain prose, maximum 300 words.\n"
+        "\n"
+        "CV text:\n"
+        f"{clean_text}\n"
+    )
+
+
+__all__ = ["cv_summary_prompt", "extract_skills_prompt", "job_scoring_prompt"]
